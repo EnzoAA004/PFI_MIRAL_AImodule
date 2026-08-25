@@ -1,0 +1,20 @@
+{
+  "schemaVersion": "pfi.post-e50.runtime-parity-sample-manifest.v1",
+  "stage": "74",
+  "seed": 20260825,
+  "selection": {
+    "strategy": "stable sort by caseId/studyId, deterministic hash sample if eligible rows exist",
+    "requested67B2Studies": 20,
+    "requested67CPairings": 30
+  },
+  "samples": {
+    "67B2": [],
+    "67C": []
+  },
+  "sampleCounts": {
+    "67B2": 0,
+    "67C": 0
+  },
+  "status": "EVIDENCE_BLOCKED",
+  "reason": "No eligible OUTER TRAIN/DEV frozen artifacts with comparable expected outputs were found locally."
+}

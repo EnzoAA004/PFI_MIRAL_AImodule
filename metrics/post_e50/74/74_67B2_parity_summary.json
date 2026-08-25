@@ -1,0 +1,31 @@
+{
+  "schemaVersion": "pfi.post-e50.67B2-runtime-parity-summary.v1",
+  "stage": "74",
+  "seed": 20260825,
+  "status": "67B2_RUNTIME_PARITY_NOT_PROVEN",
+  "sampleSize": 0,
+  "eligibleArtifactCount": 0,
+  "gates": {
+    "statusExactMatch": "NOT_RUN",
+    "localizedLevelExactMatch": "NOT_RUN",
+    "abstentionExactMatch": "NOT_RUN",
+    "noLevelWhenAbstained": "NOT_RUN",
+    "sourceIs67B2": "NOT_RUN",
+    "validatedTrue": "NOT_RUN",
+    "modelSha256Exact": "NOT_RUN",
+    "confidenceTolerance": "NOT_RUN"
+  },
+  "tolerances": {
+    "confidenceAbsDelta": 0.000001
+  },
+  "reason": "No eligible OUTER TRAIN/DEV frozen 67B2 artifacts with per-case expected outputs were found locally.",
+  "productEnablement": {
+    "artifactAvailable": false,
+    "runtimeAvailable": true,
+    "parityVerified": false,
+    "productEnabled": false,
+    "validated": true,
+    "abstentionSupported": true,
+    "blocker": "67B2_RUNTIME_PARITY_NOT_PROVEN"
+  }
+}

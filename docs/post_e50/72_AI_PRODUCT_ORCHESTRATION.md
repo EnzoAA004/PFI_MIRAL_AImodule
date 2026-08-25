@@ -54,13 +54,15 @@ El modelo `ProductAnalyzeRequest` usa `extra=forbid`, por lo que no acepta `inpu
 8. 67C se reporta siempre `validated=false`, `experimental=true`, `reviewRequired=true`; sin adapter materializado queda `adapter_pending`.
 9. P10.7 queda `blocked_preprocessing_parity` y `automaticInferenceEnabled=false`.
 
+Nota 73: se agregaron adapters runtime candidatos para 67B2/67C, pero sin evidencia permitida suficiente de paridad contra los SHAs congelados. Por eso el producto queda fail-closed como `unavailable`/`rejected`, no como `completed`, y `productEnabled=false`.
+
 ## Estados Globales
 
 - `completed`: solamente cuando todas las capabilities requeridas solicitadas terminaron sin pendientes, bloqueos, abstenciones ni estados experimentales.
 - `partial`: cuando hay resultado util de segmentacion/morfometria, pero alguna capability solicitada quedo `unavailable`, `adapter_pending`, `experimental`, `abstained` o `blocked`.
 - `failed`: cuando no hay resultado util del analisis principal.
 
-En 72, con 67B2/67C solicitados y adapters productivos pendientes, el resultado esperado es `partial`.
+En 72/73, con 67B2/67C solicitados y adapters productivos pendientes o con paridad runtime no probada, el resultado esperado es `partial`.
 
 ## Capability Matrix
 
@@ -68,15 +70,15 @@ En 72, con 67B2/67C solicitados y adapters productivos pendientes, el resultado 
 | --- | --- | --- | --- | --- |
 | Segmentacion sagital | available | available via pipeline | validated | enabled |
 | Segmentacion axial v2 | available | available via pipeline | validated | enabled |
-| Localizacion absoluta 67B2 | available | adapter pending | validated_with_abstention | adapter_pending, no abstention inventada |
-| Pairing 67C | available | adapter pending | not validated | adapter_pending, experimental review required |
+| Localizacion absoluta 67B2 | frozen SHA documentado, artifact productivo no disponible localmente | runtime candidato, productEnabled=false por paridad no probada | validated_with_abstention historico | unavailable/parity_not_proven, no abstention inventada |
+| Pairing 67C | frozen SHA documentado, artifact productivo no disponible localmente | runtime candidato, productEnabled=false por paridad no probada | not validated | rejected/parity_not_proven, experimental review required |
 | Morfometria sagital 68 | available | available via pipeline | technical QC PASS | descriptive only |
 | Morfometria axial 68 | available | available via pipeline | technical QC PASS | raw classes preserved |
 | P10.7 patologias | checkpoint verified | automatic runtime blocked | preprocessing parity not enabled for product | blocked_preprocessing_parity |
 
 ## Readiness
 
-`GET /readiness` ahora incluye `productRelease`, con `releaseId`, `schemaVersion`, `orchestrationReady`, `automaticPathologyInference=false`, `humanReviewRequired=true` y matriz por capability distinguiendo `artifactAvailable`, `runtimeAvailable`, `validated`, `experimental`, `blocked` y `adapterPending`.
+`GET /readiness` ahora incluye `productRelease`, con `releaseId`, `schemaVersion`, `orchestrationReady`, `automaticPathologyInference=false`, `humanReviewRequired=true` y matriz por capability distinguiendo `artifactAvailable`, `runtimeAvailable`, `productEnabled`, `validated`, `experimental`, `blocked`, `adapterPending`, `parityVerified` y blockers.
 
 ## Privacidad
 

@@ -6,6 +6,14 @@ from typing import Any
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from .agent_policy import HUMAN_REVIEW_REQUIRED, NOT_CLINICAL_DIAGNOSIS
+from .absolute_disc_localization_runtime import (
+    localize_absolute_disc_levels,
+    runtime_status as absolute_disc_runtime_status,
+)
+from .axial_level_pairing_runtime import (
+    pair_disc_to_axial_slice,
+    runtime_status as axial_pairing_runtime_status,
+)
 from .security import SENSITIVE_KEYS, sanitize_public_text
 
 PRODUCT_SCHEMA_VERSION = "pfi.ai-product-result.v1"
@@ -57,6 +65,8 @@ class ProductAnalyzeRequest(BaseModel):
 
 
 def product_release_readiness() -> dict[str, Any]:
+    absolute_status = absolute_disc_runtime_status()
+    pairing_status = axial_pairing_runtime_status()
     return {
         "releaseId": PRODUCT_RELEASE_ID,
         "schemaVersion": PRODUCT_SCHEMA_VERSION,
@@ -69,21 +79,24 @@ def product_release_readiness() -> dict[str, Any]:
             "sagittalSegmentation": capability_state(True, "validated", runtime_available=True),
             "axialSegmentationV2": capability_state(True, "validated", runtime_available=True),
             "absoluteDiscLocalization67B2": capability_state(
-                True,
-                "adapter_pending",
-                runtime_available=False,
-                adapter_pending=True,
-                blocker="product_adapter_pending",
+                bool(absolute_status["artifactAvailable"]),
+                str(absolute_status["adapterStatus"]),
+                runtime_available=bool(absolute_status["runtimeAvailable"]),
+                product_enabled=bool(absolute_status["productEnabled"]),
+                parity_verified=bool(absolute_status["parityVerified"]),
+                abstention_supported=bool(absolute_status["abstentionSupported"]),
+                blocker="67B2_RUNTIME_PARITY_NOT_PROVEN",
             ),
             "axialPairing67C": capability_state(
-                True,
-                "adapter_pending",
+                bool(pairing_status["artifactAvailable"]),
+                str(pairing_status["adapterStatus"]),
                 validated=False,
-                runtime_available=False,
+                runtime_available=bool(pairing_status["runtimeAvailable"]),
+                product_enabled=bool(pairing_status["productEnabled"]),
+                parity_verified=bool(pairing_status["parityVerified"]),
                 experimental=True,
-                adapter_pending=True,
                 review_required=True,
-                blocker="product_adapter_pending",
+                blocker="67C_RUNTIME_PARITY_NOT_PROVEN",
             ),
             "sagittalMorphometry68": capability_state(True, "technical_qc_pass_descriptive", runtime_available=True),
             "axialMorphometry68": capability_state(True, "technical_qc_pass_raw_classes", runtime_available=True),
@@ -120,6 +133,9 @@ def capability_state(
     *,
     validated: bool = True,
     runtime_available: bool,
+    product_enabled: bool = True,
+    parity_verified: bool | None = None,
+    abstention_supported: bool | None = None,
     experimental: bool = False,
     adapter_pending: bool = False,
     review_required: bool = True,
@@ -128,6 +144,7 @@ def capability_state(
     payload = {
         "artifactAvailable": artifact_available,
         "runtimeAvailable": runtime_available,
+        "productEnabled": product_enabled,
         "validated": validated,
         "experimental": experimental,
         "blocked": bool(blocker and not adapter_pending),
@@ -135,6 +152,10 @@ def capability_state(
         "status": status,
         "reviewRequired": review_required,
     }
+    if parity_verified is not None:
+        payload["parityVerified"] = parity_verified
+    if abstention_supported is not None:
+        payload["abstentionSupported"] = abstention_supported
     if blocker:
         payload["blocker"] = blocker
     return payload
@@ -281,10 +302,17 @@ def product_status(
     if failures:
         return "partial"
     if capabilities.absoluteDiscLocalization67B2:
-        if any(level.get("localization", {}).get("status") in {"adapter_pending", "abstained"} for level in disc_levels):
+        if any(level.get("localization", {}).get("status") in {"adapter_pending", "abstained", "unavailable"} for level in disc_levels):
             return "partial"
     if capabilities.axialPairing67C:
-        if any(level.get("axialPairing", {}).get("status") in {"adapter_pending", "experimental", "unavailable"} for level in disc_levels):
+        if any(
+            level.get("axialPairing", {}).get("status") in {"adapter_pending", "experimental", "unavailable", "rejected"}
+            or (
+                level.get("axialPairing", {}).get("status") != "not_requested"
+                and level.get("axialPairing", {}).get("experimental") is True
+            )
+            for level in disc_levels
+        ):
             return "partial"
     if capabilities.degenerativeFindingsP10_7:
         if any(level.get("degenerativeFindings", {}).get("status") == "blocked_preprocessing_parity" for level in disc_levels):
@@ -346,44 +374,45 @@ def mask_classes(masks: list[Any], plane: str) -> list[str]:
 def build_disc_levels(planes: dict[str, Any], capabilities: ProductCapabilities, warnings: list[str]) -> list[dict[str, Any]]:
     sagittal = planes.get("sagittal") if isinstance(planes.get("sagittal"), dict) else {}
     axial = planes.get("axial") if isinstance(planes.get("axial"), dict) else {}
-    localization_status, levels = localization_result(sagittal, capabilities)
-    if localization_status == "adapter_pending":
-        warnings.append("67B2_localization_adapter_pending")
+    localization = localization_result(sagittal, capabilities)
+    localization_status = str(localization.get("status"))
+    levels = [localization.get("level")]
+    if localization_status == "unavailable":
+        warnings.extend(str(item) for item in localization.get("warnings", []))
     elif localization_status == "abstained":
         warnings.append("67B2_localization_abstained")
     return [
-        disc_level_payload(level, localization_status, sagittal, axial, capabilities)
+        disc_level_payload(level, localization, sagittal, axial, capabilities)
         for level in levels
     ]
 
 
-def localization_result(sagittal: dict[str, Any], capabilities: ProductCapabilities) -> tuple[str, list[str | None]]:
+def localization_result(sagittal: dict[str, Any], capabilities: ProductCapabilities) -> dict[str, Any]:
     if not capabilities.absoluteDiscLocalization67B2:
-        return "not_requested", [None]
+        return {
+            "status": "not_requested",
+            "level": None,
+            "source": "67B2",
+            "validated": True,
+            "abstentionPreserved": False,
+            "warnings": [],
+        }
     localization = sagittal.get("localization") if isinstance(sagittal.get("localization"), dict) else {}
-    if localization.get("status") == "abstained":
-        return "abstained", [None]
-    value = localization.get("level")
-    if isinstance(value, str) and value.strip():
-        return "localized", [value.strip()]
-    values = localization.get("levels")
-    if isinstance(values, list):
-        levels = [str(item).strip() for item in values if str(item).strip()]
-        if levels:
-            return "localized", levels
-    return "adapter_pending", [None]
+    if localization.get("source") == "67B2" and localization.get("parityVerified") is True:
+        return localize_absolute_disc_levels(localization, parity_verified=True)
+    return localize_absolute_disc_levels()
 
 
 def disc_level_payload(
     level: str | None,
-    localization_status: str,
+    localization: dict[str, Any],
     sagittal: dict[str, Any],
     axial: dict[str, Any],
     capabilities: ProductCapabilities,
 ) -> dict[str, Any]:
-    pairing_status = "not_requested"
-    if capabilities.axialPairing67C:
-        pairing_status = "adapter_pending"
+    localization_status = str(localization.get("status"))
+    pairing = pairing_result(level, localization, axial, capabilities)
+    pairing_status = str(pairing.get("status"))
     return {
         "level": level,
         "localization": {
@@ -391,15 +420,22 @@ def disc_level_payload(
             "validated": True,
             "source": "67B2",
             "abstentionPreserved": localization_status == "abstained",
-            "adapterPending": localization_status == "adapter_pending",
+            "adapterPending": False,
+            "confidence": localization.get("confidence"),
+            "modelSha256": localization.get("modelSha256"),
+            "warnings": localization.get("warnings", []),
         },
         "axialPairing": {
             "status": pairing_status,
             "validated": False,
             "experimental": True,
             "reviewRequired": HUMAN_REVIEW_REQUIRED,
-            "adapterPending": pairing_status == "adapter_pending",
+            "adapterPending": False,
             "source": "67C",
+            "seriesId": pairing.get("seriesId"),
+            "instanceNumber": pairing.get("instanceNumber"),
+            "geometry": pairing.get("geometry"),
+            "warnings": pairing.get("warnings", []),
         },
         "measurements": measurements_for_level(level, sagittal, axial),
         "degenerativeFindings": {
@@ -409,6 +445,35 @@ def disc_level_payload(
             "reviewRequired": HUMAN_REVIEW_REQUIRED,
         },
     }
+
+
+def pairing_result(
+    level: str | None,
+    localization: dict[str, Any],
+    axial: dict[str, Any],
+    capabilities: ProductCapabilities,
+) -> dict[str, Any]:
+    if not capabilities.axialPairing67C:
+        return {"status": "not_requested", "warnings": []}
+    if localization.get("status") != "localized" or not level:
+        return {"status": "not_requested", "warnings": ["67C_NOT_REQUESTED_WITHOUT_67B2_LOCALIZED_LEVEL"]}
+    point = localization.get("centroidPatientXYZ")
+    planes = axial.get("axialPlanes") if isinstance(axial.get("axialPlanes"), list) else []
+    if point is None or not planes:
+        return {
+            "status": "unavailable",
+            "source": "67C",
+            "validated": False,
+            "experimental": True,
+            "reviewRequired": HUMAN_REVIEW_REQUIRED,
+            "warnings": ["67C_RUNTIME_INPUT_UNAVAILABLE"],
+        }
+    return pair_disc_to_axial_slice(
+        level=level,
+        disc_centroid_patient_xyz=point,
+        axial_planes=planes,
+        parity_verified=False,
+    )
 
 
 def measurements_for_level(level: str | None, sagittal: dict[str, Any], axial: dict[str, Any]) -> list[dict[str, Any]]:

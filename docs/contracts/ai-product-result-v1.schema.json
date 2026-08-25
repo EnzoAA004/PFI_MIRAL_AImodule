@@ -84,7 +84,7 @@
           "type": "object",
           "required": ["status", "validated", "source"],
           "properties": {
-            "status": { "enum": ["localized", "abstained", "adapter_pending", "not_requested"] },
+            "status": { "enum": ["localized", "abstained", "adapter_pending", "unavailable", "not_requested"] },
             "validated": { "const": true },
             "source": { "const": "67B2" },
             "abstentionPreserved": { "type": "boolean" },
@@ -95,7 +95,7 @@
           "type": "object",
           "required": ["status", "validated", "experimental", "reviewRequired"],
           "properties": {
-            "status": { "enum": ["adapter_pending", "experimental", "unavailable", "not_requested"] },
+            "status": { "enum": ["paired", "adapter_pending", "experimental", "unavailable", "rejected", "not_requested"] },
             "validated": { "const": false },
             "experimental": { "const": true },
             "reviewRequired": { "const": true },

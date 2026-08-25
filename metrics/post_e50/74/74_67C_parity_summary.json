@@ -1,0 +1,36 @@
+{
+  "schemaVersion": "pfi.post-e50.67C-runtime-parity-summary.v1",
+  "stage": "74",
+  "seed": 20260825,
+  "status": "67C_RUNTIME_PARITY_NOT_PROVEN",
+  "sampleSize": 0,
+  "eligibleArtifactCount": 0,
+  "method": "BASELINE_A_NEAREST_PLANE_PLUS_FOV",
+  "gates": {
+    "emitRejectExactMatch": "NOT_RUN",
+    "selectedSeriesExactMatch": "NOT_RUN",
+    "selectedSliceInstanceExactMatch": "NOT_RUN",
+    "insideFovExactMatch": "NOT_RUN",
+    "planeDistanceTolerance": "NOT_RUN",
+    "marginTolerance": "NOT_RUN",
+    "methodExact": "NOT_RUN",
+    "validatedFalse": "NOT_RUN",
+    "experimentalTrue": "NOT_RUN",
+    "reviewRequiredTrue": "NOT_RUN"
+  },
+  "tolerances": {
+    "planeDistanceAbsDeltaMm": 0.000001,
+    "marginAbsDelta": 0.000001
+  },
+  "reason": "No eligible OUTER TRAIN/DEV frozen 67C artifacts with expected emit/reject, series, slice, insideFov, distance and margin were found locally.",
+  "productEnablement": {
+    "artifactAvailable": false,
+    "runtimeAvailable": true,
+    "parityVerified": false,
+    "productEnabled": false,
+    "validated": false,
+    "experimental": true,
+    "reviewRequired": true,
+    "blocker": "67C_RUNTIME_PARITY_NOT_PROVEN"
+  }
+}

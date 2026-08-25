@@ -11,6 +11,7 @@ from pfi_ai_service.product_orchestration import (
     PRODUCT_SCHEMA_VERSION,
     ProductAnalyzeRequest,
     ProductCapabilities,
+    product_status,
     product_release_readiness,
     run_product_analysis,
 )
@@ -124,21 +125,21 @@ def test_global_status_partial_when_requested_adapter_is_missing(monkeypatch) ->
     body = run_default(monkeypatch)
 
     assert body["status"] == "partial"
-    assert "67B2_localization_adapter_pending" in body["warnings"]
+    assert "67B2_RUNTIME_PARITY_NOT_PROVEN" in body["warnings"]
 
 
-def test_67b2_adapter_pending_is_not_reported_as_abstained(monkeypatch) -> None:
+def test_67b2_unavailable_is_not_reported_as_abstained(monkeypatch) -> None:
     body = run_default(monkeypatch)
     level = body["discLevels"][0]
 
     assert level["level"] is None
-    assert level["localization"]["status"] == "adapter_pending"
-    assert level["localization"]["adapterPending"] is True
+    assert level["localization"]["status"] == "unavailable"
+    assert level["localization"]["adapterPending"] is False
     assert level["localization"]["abstentionPreserved"] is False
 
 
 def test_67b2_real_abstention_is_preserved(monkeypatch) -> None:
-    body = run_default(monkeypatch, payloads={"sagittal": {"localization": {"status": "abstained"}}})
+    body = run_default(monkeypatch, payloads={"sagittal": {"localization": {"status": "abstained", "source": "67B2", "parityVerified": True}}})
     level = body["discLevels"][0]
 
     assert body["status"] == "partial"
@@ -154,21 +155,21 @@ def test_67b2_never_fabricates_a_level_without_runtime_output(monkeypatch) -> No
 
 
 def test_localized_level_only_comes_from_pipeline_localization(monkeypatch) -> None:
-    body = run_default(monkeypatch, payloads={"sagittal": {"localization": {"level": "L4-L5"}}})
+    body = run_default(monkeypatch, payloads={"sagittal": {"localization": {"status": "localized", "level": "L4-L5", "source": "67B2", "parityVerified": True}}})
 
     assert body["discLevels"][0]["level"] == "L4-L5"
     assert body["discLevels"][0]["localization"]["status"] == "localized"
 
 
 def test_67c_is_never_validated_and_stays_review_required(monkeypatch) -> None:
-    body = run_default(monkeypatch, payloads={"sagittal": {"localization": {"level": "L4-L5"}}})
+    body = run_default(monkeypatch, payloads={"sagittal": {"localization": {"status": "localized", "level": "L4-L5", "source": "67B2", "parityVerified": True}}})
     pairing = body["discLevels"][0]["axialPairing"]
 
-    assert pairing["status"] == "adapter_pending"
+    assert pairing["status"] == "unavailable"
     assert pairing["validated"] is False
     assert pairing["experimental"] is True
     assert pairing["reviewRequired"] is True
-    assert pairing["adapterPending"] is True
+    assert pairing["adapterPending"] is False
 
 
 def test_p10_7_remains_blocked_and_not_automatic(monkeypatch) -> None:
@@ -251,6 +252,23 @@ def test_completed_requires_no_requested_pending_blocked_or_experimental_capabil
     assert body["discLevels"][0]["axialPairing"]["status"] == "not_requested"
 
 
+def test_experimental_requested_capability_keeps_global_status_partial() -> None:
+    status = product_status(
+        has_available_plane=True,
+        failures=[],
+        disc_levels=[
+            {
+                "localization": {"status": "localized"},
+                "axialPairing": {"status": "paired", "experimental": True},
+                "degenerativeFindings": {"status": "blocked_preprocessing_parity"},
+            }
+        ],
+        capabilities=ProductCapabilities(degenerativeFindingsP10_7=False),
+    )
+
+    assert status == "partial"
+
+
 def test_product_request_rejects_local_paths() -> None:
     with pytest.raises(ValidationError):
         ProductAnalyzeRequest.model_validate({
@@ -267,12 +285,14 @@ def test_product_release_readiness_matrix_distinguishes_states() -> None:
     p10 = product["capabilities"]["pathologyP10_7"]
 
     assert product["releaseId"] == PRODUCT_RELEASE_ID
-    assert localization["artifactAvailable"] is True
-    assert localization["runtimeAvailable"] is False
+    assert localization["artifactAvailable"] is False
+    assert localization["runtimeAvailable"] is True
     assert localization["validated"] is True
-    assert localization["adapterPending"] is True
+    assert localization["parityVerified"] is False
+    assert localization["productEnabled"] is False
     assert pairing["experimental"] is True
     assert pairing["validated"] is False
-    assert pairing["adapterPending"] is True
+    assert pairing["parityVerified"] is False
+    assert pairing["productEnabled"] is False
     assert p10["blocked"] is True
     assert p10["automaticInferenceEnabled"] is False

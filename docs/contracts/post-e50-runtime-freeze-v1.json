@@ -1,0 +1,72 @@
+{
+  "schemaVersion": "pfi.post-e50.runtime-freeze.v1",
+  "releaseId": "post-e50-ai-product-runtime-freeze-v1",
+  "runtimeFreezeStatus": "EVIDENCE_BLOCKED",
+  "sourceProductReleaseId": "post-e50-ai-product-freeze-v1",
+  "seed": 20260825,
+  "capabilities": {
+    "sagittalSegmentation": {
+      "artifactAvailable": true,
+      "runtimeAvailable": true,
+      "parityVerified": true,
+      "productEnabled": true,
+      "validated": true,
+      "experimental": false,
+      "reviewRequired": true,
+      "blocker": null
+    },
+    "axialSegmentation": {
+      "artifactAvailable": true,
+      "runtimeAvailable": true,
+      "parityVerified": true,
+      "productEnabled": true,
+      "validated": true,
+      "experimental": false,
+      "reviewRequired": true,
+      "blocker": null
+    },
+    "absoluteDiscLocalization67B2": {
+      "artifactAvailable": false,
+      "runtimeAvailable": true,
+      "parityVerified": false,
+      "productEnabled": false,
+      "validated": true,
+      "experimental": false,
+      "reviewRequired": true,
+      "abstentionSupported": true,
+      "blocker": "67B2_RUNTIME_PARITY_NOT_PROVEN"
+    },
+    "axialPairing67C": {
+      "artifactAvailable": false,
+      "runtimeAvailable": true,
+      "parityVerified": false,
+      "productEnabled": false,
+      "validated": false,
+      "experimental": true,
+      "reviewRequired": true,
+      "blocker": "67C_RUNTIME_PARITY_NOT_PROVEN"
+    },
+    "morphometry": {
+      "artifactAvailable": true,
+      "runtimeAvailable": true,
+      "parityVerified": true,
+      "productEnabled": true,
+      "validated": true,
+      "experimental": false,
+      "reviewRequired": true,
+      "blocker": null
+    },
+    "P10_7": {
+      "artifactAvailable": true,
+      "runtimeCheckpointVerified": true,
+      "runtimeAvailable": false,
+      "automaticInferenceEnabled": false,
+      "parityVerified": false,
+      "productEnabled": false,
+      "validated": false,
+      "experimental": true,
+      "reviewRequired": true,
+      "blocker": "preprocessing_parity_not_proven"
+    }
+  }
+}
