@@ -1,0 +1,135 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "pfi.ai-product-result.v1",
+  "title": "PFI AI Product Result v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schemaVersion",
+    "runId",
+    "caseId",
+    "release",
+    "status",
+    "planes",
+    "discLevels",
+    "warnings",
+    "review",
+    "notClinicalDiagnosis",
+    "autonomousDiagnosis",
+    "humanReviewRequired"
+  ],
+  "properties": {
+    "schemaVersion": { "const": "pfi.ai-product-result.v1" },
+    "runId": { "type": "string", "minLength": 1 },
+    "traceId": { "type": ["string", "null"] },
+    "caseId": { "type": "string", "minLength": 1 },
+    "release": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["releaseId"],
+      "properties": {
+        "releaseId": { "const": "post-e50-ai-product-freeze-v1" }
+      }
+    },
+    "status": { "enum": ["completed", "partial", "failed"] },
+    "planes": {
+      "type": "object",
+      "required": ["sagittal", "axial"],
+      "properties": {
+        "sagittal": { "$ref": "#/$defs/plane" },
+        "axial": { "$ref": "#/$defs/plane" }
+      }
+    },
+    "discLevels": {
+      "type": "array",
+      "items": { "$ref": "#/$defs/discLevel" }
+    },
+    "warnings": {
+      "type": "array",
+      "items": { "type": "string" }
+    },
+    "review": {
+      "type": "object",
+      "required": ["required", "status"],
+      "properties": {
+        "required": { "const": true },
+        "status": { "enum": ["pending", "in_review", "completed"] },
+        "professionalReviewRequired": { "const": true }
+      }
+    },
+    "notClinicalDiagnosis": { "const": true },
+    "autonomousDiagnosis": { "const": false },
+    "humanReviewRequired": { "const": true }
+  },
+  "$defs": {
+    "plane": {
+      "type": "object",
+      "required": ["status", "runtimeAvailable", "reviewRequired"],
+      "properties": {
+        "status": { "enum": ["available", "unavailable", "not_requested"] },
+        "runtimeAvailable": { "type": "boolean" },
+        "inputId": { "type": ["string", "null"] },
+        "runId": { "type": "string" },
+        "reviewRequired": { "const": true },
+        "segmentation": { "type": "object" },
+        "morphometry": { "type": "object" }
+      }
+    },
+    "discLevel": {
+      "type": "object",
+      "required": ["level", "localization", "axialPairing", "measurements", "degenerativeFindings"],
+      "properties": {
+        "level": { "type": ["string", "null"] },
+        "localization": {
+          "type": "object",
+          "required": ["status", "validated", "source"],
+          "properties": {
+            "status": { "enum": ["localized", "abstained", "adapter_pending", "not_requested"] },
+            "validated": { "const": true },
+            "source": { "const": "67B2" },
+            "abstentionPreserved": { "type": "boolean" },
+            "adapterPending": { "type": "boolean" }
+          }
+        },
+        "axialPairing": {
+          "type": "object",
+          "required": ["status", "validated", "experimental", "reviewRequired"],
+          "properties": {
+            "status": { "enum": ["adapter_pending", "experimental", "unavailable", "not_requested"] },
+            "validated": { "const": false },
+            "experimental": { "const": true },
+            "reviewRequired": { "const": true },
+            "adapterPending": { "type": "boolean" },
+            "source": { "const": "67C" }
+          }
+        },
+        "measurements": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": ["structure", "reviewRequired"],
+            "properties": {
+              "plane": { "enum": ["sagittal", "axial"] },
+              "level": { "type": ["string", "null"] },
+              "structure": { "type": "string" },
+              "areaMm2": { "type": ["number", "null"] },
+              "majorAxisMm": { "type": ["number", "null"] },
+              "minorAxisMm": { "type": ["number", "null"] },
+              "reviewRequired": { "const": true }
+            }
+          }
+        },
+        "degenerativeFindings": {
+          "type": "object",
+          "required": ["status", "automaticInferenceEnabled", "reviewRequired"],
+          "properties": {
+            "status": { "const": "blocked_preprocessing_parity" },
+            "automaticInferenceEnabled": { "const": false },
+            "checkpointSha256": { "type": "string" },
+            "reviewRequired": { "const": true }
+          }
+        }
+      }
+    }
+  }
+}

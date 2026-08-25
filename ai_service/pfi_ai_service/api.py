@@ -35,6 +35,7 @@ from .model_artifacts import artifact_summary, registry_with_artifact_status, ve
 from .model_materializer import sync_model_artifacts
 from .multiplanar_contract import multiplanar_workspace_contract, multiplanar_workspace_contract_v2
 from .pipeline import PipelineRunRequest, run_pipeline
+from .product_orchestration import ProductAnalyzeRequest, run_product_analysis
 from .readiness import build_readiness
 from .report_summary import recent_agent_report_summaries, summarize_agent_report
 from .reporting import build_markdown_summary
@@ -412,6 +413,11 @@ def inference_axial(request: PipelineRunRequest):
 def pipeline_run(request: PipelineRunRequest, http_request: Request):
     traced_request = with_trace_metadata(request, request_trace_id(http_request))
     return clean_for_json(run_pipeline(traced_request))
+
+
+@app.post("/v1/product/analyze")
+def product_analyze(request: ProductAnalyzeRequest, http_request: Request):
+    return clean_for_json(run_product_analysis(request, trace_id=request_trace_id(http_request)))
 
 
 
