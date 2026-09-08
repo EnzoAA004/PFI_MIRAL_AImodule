@@ -41,6 +41,7 @@ testpaths = ["tests", "ai_service/tests"]
 pythonpath = ["src", "ai_service"]
 markers = [
   "real_checkpoint: requires PFI_SUBARTICULAR_CHECKPOINT_PATH and the frozen .pt outside Git",
+  "notebook_tooling: exercises pfi_ai_service.training.notebook_executor; needs nbclient/nbformat/ipykernel/jupyter_client, deliberately absent from ai_service/requirements-ai-service.txt to keep the runtime image lean",
 ]
 
 # Cobertura. Se declara aca y no en el comando del CI para que medir en local y medir en

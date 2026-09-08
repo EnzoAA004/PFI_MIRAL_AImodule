@@ -21,6 +21,7 @@ def _write_notebook(path: Path, sources: list[str]) -> None:
     path.write_text(json.dumps({"cells": cells, "metadata": {}, "nbformat": 4, "nbformat_minor": 5}), encoding="utf-8")
 
 
+@pytest.mark.notebook_tooling
 @pytest.mark.skipif(not HAS_NB_DEPS, reason="nbclient/nbformat/ipykernel no instalados en este venv")
 def test_successful_notebook_streams_stdout_and_saves_outputs(tmp_path: Path) -> None:
     src = tmp_path / "ok.ipynb"
@@ -37,6 +38,7 @@ def test_successful_notebook_streams_stdout_and_saves_outputs(tmp_path: Path) ->
     assert json.loads(src.read_text(encoding="utf-8"))["cells"][0]["outputs"] == []
 
 
+@pytest.mark.notebook_tooling
 @pytest.mark.skipif(not HAS_NB_DEPS, reason="nbclient/nbformat/ipykernel no instalados en este venv")
 def test_failed_notebook_returns_one_and_keeps_partial_output(tmp_path: Path) -> None:
     src = tmp_path / "fail.ipynb"
@@ -53,6 +55,7 @@ def test_failed_notebook_returns_one_and_keeps_partial_output(tmp_path: Path) ->
     assert "RuntimeError" in text
 
 
+@pytest.mark.notebook_tooling
 @pytest.mark.skipif(not HAS_NB_DEPS, reason="nbclient/nbformat/ipykernel no instalados en este venv")
 def test_execute_result_and_display_data_text_plain(tmp_path: Path) -> None:
     src = tmp_path / "display.ipynb"
