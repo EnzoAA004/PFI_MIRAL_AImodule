@@ -7,7 +7,7 @@ python-multipart
 pandas
 httpx
 --extra-index-url https://download.pytorch.org/whl/cpu
-torch==2.13.0+cpu
+torch==2.14.0+cpu
 torchvision==0.28.0+cpu
 pydicom>=2.4
 SimpleITK>=2.3
