@@ -168,6 +168,33 @@ def predict_subarticular_from_registered_roi(
     return get_subarticular_classifier().predict_from_roi(roi)
 
 
+def explain_subarticular_from_registered_roi(
+    *,
+    input_id: str,
+    instance_number: int,
+    x: float,
+    y: float,
+    side: str,
+    level: str,
+    target_class: str | None = None,
+):
+    """EXT-03: same registered-ROI resolution `predict_subarticular_from_registered_roi` already
+    uses — never a second, divergent lookup path — handed to `gradcam.explain_from_roi` instead
+    of `predict_from_roi`."""
+    from . import gradcam
+
+    record = _registered_axial_input(input_id)
+    roi = SubarticularRoi(
+        series_path=record.path,
+        instance_number=int(instance_number),
+        x=float(x),
+        y=float(y),
+        side=side,
+        level=level,
+    )
+    return gradcam.explain_from_roi(get_subarticular_classifier(), roi, target_class=target_class)
+
+
 def _registered_axial_input(input_id: str) -> InputRecord:
     record = resolve_registered_input(input_id)
     if record.plane != "axial":

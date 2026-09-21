@@ -1,0 +1,163 @@
+{
+  "schemaVersion": "pfi.post-e50.runtime-parity-evidence-inventory.v1",
+  "stage": "74",
+  "seed": 20260825,
+  "policy": {
+    "parityIsValidation": false,
+    "trainingPerformed": false,
+    "checkpointsModified": false,
+    "validationAccessed": false,
+    "internalTestAccessed": false,
+    "officialTestAccessed": false
+  },
+  "overallStatus": "EVIDENCE_BLOCKED",
+  "artifacts": [
+    {
+      "path": "artifacts/post_e50/absolute_level_anchor/post_e50_67B_split_manifest.json",
+      "capability": "67B2",
+      "stage": "67B",
+      "split": "none",
+      "schema": "split_manifest",
+      "sizeBytes": 227,
+      "sha256": "829cfc7adb441f6a8c1f18bced1bda1eb021374b76d339366070d836a79858a4",
+      "eligibleForParity": false,
+      "reason": "Split counts are train=0 validation=0 internal_test=0; no frozen TRAIN/DEV prediction rows are present."
+    },
+    {
+      "path": "artifacts/post_e50/absolute_level_anchor/post_e50_67B_summary.json",
+      "capability": "67B2",
+      "stage": "67B",
+      "split": "none",
+      "schema": "summary",
+      "sizeBytes": 4941,
+      "sha256": "b7a199d7add09b0fee54ac79b4822ab042d491c377fb283eba90f14081d7a4d8",
+      "eligibleForParity": false,
+      "reason": "Run is BLOCKED/NOT_RUN with rsna_available=false and split train=0; checkpoint SHA is not the frozen 67B2 model SHA."
+    },
+    {
+      "path": "artifacts/post_e50/absolute_level_anchor/post_e50_67B_real_closing_evidence.json",
+      "capability": "67B2",
+      "stage": "67B",
+      "split": "mixed_summary",
+      "schema": "closing_evidence",
+      "sizeBytes": 2963,
+      "sha256": "2681dce7725e81c1422c6a7af561c99ea651f0c0834583f1710e7ba2c187d569",
+      "eligibleForParity": false,
+      "reason": "Summary-only Google Colab evidence for 67B, not frozen 67B2 per-case predictions; automatic_disc_localization_validated=false."
+    },
+    {
+      "path": "artifacts/post_e50/level_localization/disc_localizations.json",
+      "capability": "67B2",
+      "stage": "67",
+      "split": "single_real_dicom_unknown",
+      "schema": "pfi.post-e50.disc-localization.v0",
+      "sizeBytes": 4589,
+      "sha256": "75a2006c89ec53ed11d7d72fa017d3276ce756e436d3c0a5be8769d87ccbec27",
+      "eligibleForParity": false,
+      "reason": "Single exploratory real-DICOM study with all levelStatus=abstain; not identified as OUTER TRAIN/DEV and not frozen 67B2 locked predictions."
+    },
+    {
+      "path": "artifacts/post_e50/level_localization/localization_summary.json",
+      "capability": "67B2",
+      "stage": "67",
+      "split": "single_real_dicom_unknown",
+      "schema": "summary",
+      "sizeBytes": 2268,
+      "sha256": "e22a30950e53be56e3a564d180170d3e0ab7beb721d438a9881cd755df405775",
+      "eligibleForParity": false,
+      "reason": "Single-study exploratory summary; not OUTER TRAIN/DEV frozen 67B2 parity evidence."
+    },
+    {
+      "path": "artifacts/post_e50/absolute_level_orientation_window/67B1_summary.json",
+      "capability": "67B2",
+      "stage": "67B1",
+      "split": "train_development_not_run",
+      "schema": "summary",
+      "sizeBytes": 4561,
+      "sha256": "45e45e06c0e88f05f9ad3c7e2090d9c2c5def9c788d0fbd062fa7f9edc3b5117",
+      "eligibleForParity": false,
+      "reason": "67B1, not 67B2; development cohort selection and execution are NOT_RUN."
+    },
+    {
+      "path": "artifacts/post_e50/absolute_level_orientation_window/67B1_smoke_parity.json",
+      "capability": "67B2",
+      "stage": "67B1",
+      "split": "smoke_not_run",
+      "schema": "smoke_parity",
+      "sizeBytes": 312,
+      "sha256": "29dfad2dfb309dc8aeb99942593e2d70aa958d0f35d7e2a953f8c3340d94d635",
+      "eligibleForParity": false,
+      "reason": "Smoke parity status is NOT_RUN and contains no per-case outputs."
+    },
+    {
+      "path": "artifacts/post_e50/series_pairing/post_e50_pairing_summary.json",
+      "capability": "67C",
+      "stage": "66",
+      "split": "single_real_dicom_unknown",
+      "schema": "summary",
+      "sizeBytes": 2483,
+      "sha256": "dc05dadbe7332fe018dfffa81f7f28d8d3721f1d01119b95d8ec6378688e2588",
+      "eligibleForParity": false,
+      "reason": "Exploratory cross-frame pairing with level_if_known=null and distance_validated=false; not frozen 67C TRAIN/DEV predictions."
+    },
+    {
+      "path": "artifacts/post_e50/series_pairing/post_e50_pairing_metrics_full.csv",
+      "capability": "67C",
+      "stage": "66",
+      "split": "single_real_dicom_unknown",
+      "schema": "csv_pairing_metrics",
+      "sizeBytes": 809,
+      "sha256": "93e9ba47e7a7ad0c990955bb5e2e1d3b5642cf2b9b60843735d33aa04266c6b1",
+      "eligibleForParity": false,
+      "reason": "One exploratory manual reference row, no known lumbar level, no frozen 67C expected emit/reject fields."
+    },
+    {
+      "path": "artifacts/post_e50/series_pairing/post_e50_series_geometry.json",
+      "capability": "67C",
+      "stage": "66",
+      "split": "single_real_dicom_unknown",
+      "schema": "series_geometry",
+      "sizeBytes": 4132,
+      "sha256": "0c1fdaa57388a84d7610c1bd8bc0bede5297ee2efe90eb04fb94d544168d0290",
+      "eligibleForParity": false,
+      "reason": "Contains geometry metadata only; no frozen expected pairing outputs and not identified as TRAIN/DEV."
+    },
+    {
+      "path": "artifacts/post_e50/series_pairing/post_e50_level_series_bundles.json",
+      "capability": "67C",
+      "stage": "66",
+      "split": "none",
+      "schema": "level_series_bundles",
+      "sizeBytes": 2,
+      "sha256": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+      "eligibleForParity": false,
+      "reason": "Empty JSON array; no parity rows."
+    },
+    {
+      "path": "notebooks/post_e50/67B2_postE50_absolute_lumbar_window_scorer.ipynb",
+      "capability": "67B2",
+      "stage": "67B2",
+      "split": "notebook_reference",
+      "schema": "notebook",
+      "sizeBytes": 309010,
+      "sha256": "58decc5abdbaf17b9d041d0420ecd14c4394461b38645a95dbd228b217e483a0",
+      "eligibleForParity": false,
+      "reason": "Notebook documents frozen validation SHAs, but local repo does not contain permitted TRAIN/DEV frozen prediction artifact rows to compare."
+    },
+    {
+      "path": "notebooks/post_e50/67C_postE50_axial_level_pairing.ipynb",
+      "capability": "67C",
+      "stage": "67C",
+      "split": "notebook_reference",
+      "schema": "notebook",
+      "sizeBytes": 598985,
+      "sha256": "bdb914541cad08c3ab75616eceabd750511c61ad287990732a599015b449ed50",
+      "eligibleForParity": false,
+      "reason": "Notebook references frozen locked_validation artifacts in external Colab/Drive paths; those are validation artifacts and not eligible for 74 TRAIN/DEV parity."
+    }
+  ],
+  "eligibleCounts": {
+    "67B2": 0,
+    "67C": 0
+  }
+}

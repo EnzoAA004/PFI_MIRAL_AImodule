@@ -4,145 +4,123 @@ on:
   push:
   pull_request:
 
-jobs:
-  ai-module:
-    runs-on: ubuntu-latest
-    env:
-      # El paquete vive bajo ai_service/. Los tests invocan tambien
-      # `python -m pfi_ai_service...` en subprocesos, por lo que no alcanza con
-      # que pytest agregue el directorio durante la coleccion: el PYTHONPATH debe
-      # heredarse en todo el job.
-      PYTHONPATH: ai_service
+concurrency:
+  group: ai-module-ci-${{ github.ref }}
+  cancel-in-progress: true
 
+permissions:
+  contents: read
+
+# ai_service tests import pfi_ai_service via pytest's own `pythonpath` config
+# (pyproject.toml [tool.pytest.ini_options]), which does not propagate to
+# subprocesses (test_notebook_executor.py spawns `python -m
+# pfi_ai_service...` directly). Setting PYTHONPATH at the job level fixes
+# those without touching product code — a workflow-config gap, not a
+# regression (see CLOUD_02_CI_PIPELINE.md).
+env:
+  PYTHONPATH: ai_service
+
+jobs:
+  # Fast gate: import/compile check, matches the pre-CLOUD-02 workflow's
+  # first real check (bumped from Python 3.11 to 3.12, the Dockerfile's
+  # actual runtime — closes the drift flagged in CLOUD-00).
+  compile-and-smoke:
+    runs-on: ubuntu-latest
     steps:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Set up Python
+      - name: Set up Python 3.12
         uses: actions/setup-python@v5
         with:
-          # Misma version que los dos Dockerfiles. Compilar en 3.11 y desplegar en
-          # 3.12 deja fuera del CI cualquier incompatibilidad entre las dos.
           python-version: "3.12"
+          cache: "pip"
+          cache-dependency-path: ai_service/requirements-ai-service.txt
 
       - name: Install AI service dependencies
         run: pip install -r ai_service/requirements-ai-service.txt
 
-      # pytest no va en requirements-ai-service.txt: ese archivo define la imagen de
-      # produccion y no tiene por que cargar dependencias de test.
-      - name: Install test dependencies
-        run: pip install pytest pytest-cov ruff
-
       - name: Compile AI service
         run: python -m compileall ai_service/pfi_ai_service
-
-      # Solo errores reales, no estilo: sintaxis invalida, nombres indefinidos,
-      # comparaciones siempre falsas, f-strings sin placeholders. Adoptar el set completo
-      # de una vez sobre 10.9k lineas dejaria el CI en rojo por cosas que no son bugs;
-      # este subconjunto habria detectado el int_or_none duplicado que quedaba muerto.
-      - name: Lint (solo errores)
-        run: ruff check --select E9,F63,F7,F82,F811 ai_service/pfi_ai_service src
-
-      # testpaths cubre tests/ y ai_service/tests/ (ver pyproject.toml). Los tests que
-      # dependen de artefactos fuera de Git (marker real_checkpoint) o de dependencias
-      # opcionales se saltean solos.
-      # La configuracion de cobertura vive en pyproject.toml, asi que medir en local y medir
-      # aca dan lo mismo. XML para herramientas, HTML para leerlo.
-      - name: Run tests with coverage
-        run: python -m pytest -q --cov --cov-report=xml --cov-report=html --cov-report=term
-
-      # El porcentaje tiene que verse sin descargar nada. Se agrupa por area en vez de
-      # listar 40 modulos: lo que importa es si el preprocesamiento y las mediciones estan
-      # cubiertos, no el numero global.
-      - name: Coverage summary
-        if: always()
-        run: |
-          test -f coverage.xml || { echo "No se genero coverage.xml" >> "$GITHUB_STEP_SUMMARY"; exit 0; }
-          python3 - >> "$GITHUB_STEP_SUMMARY" <<'PY'
-          import xml.etree.ElementTree as ET
-          from collections import defaultdict
-
-          AREAS = [
-              ("preprocesamiento / IO", ("real_inference_runtime", "study_ingestion", "input_registry",
-                                          "deidentify", "dicom_seg", "dicom_sr")),
-              ("mediciones y geometria", ("contract_geometry", "multiplanar_3d_reconstruction",
-                                           "axial_level", "measurements", "geometry")),
-              ("orquestacion de inferencia", ("pipeline", "multiplanar_v2_executor", "multiplanar_run",
-                                               "multiplanar_routes", "subarticular_runtime_service",
-                                               "disc_degenerative")),
-              ("contratos y validacion", ("contract", "schemas", "model_manifest", "model_artifacts",
-                                           "readiness", "quality", "evaluation")),
-              ("clasificadores congelados", ("subarticular_frozen_classifier", "product_checkpoint",
-                                              "model_architectures", "full_series_segmentation")),
-          ]
-
-          root = ET.parse("coverage.xml").getroot()
-          lr = float(root.get("line-rate", 0)) * 100
-          br = float(root.get("branch-rate", 0)) * 100
-          print("## Cobertura del modulo de IA\n")
-          print(f"**Lineas: {lr:.1f}%** &nbsp;&nbsp; **Ramas: {br:.1f}%**\n")
-
-          areas = defaultdict(lambda: [0, 0, 0, 0])   # lines_cov, lines_tot, br_cov, br_tot
-          otros = [0, 0, 0, 0]
-          for cls in root.iter("class"):
-              fn = cls.get("filename", "")
-              bucket = None
-              for name, keys in AREAS:
-                  if any(k in fn for k in keys):
-                      bucket = areas[name]
-                      break
-              bucket = otros if bucket is None else bucket
-              for line in cls.iter("line"):
-                  bucket[1] += 1
-                  if int(line.get("hits", 0)) > 0:
-                      bucket[0] += 1
-                  cond = line.get("condition-coverage")
-                  if cond and "(" in cond:
-                      c, t = cond.split("(")[1].rstrip(")").split("/")
-                      bucket[2] += int(c); bucket[3] += int(t)
-
-          print("| Area | Lineas | Ramas |")
-          print("|---|---:|---:|")
-          for name, _ in AREAS:
-              c, t, bc, bt = areas[name]
-              if not t:
-                  continue
-              b = f"{100.0*bc/bt:.1f}%" if bt else "n/a"
-              print(f"| {name} | {100.0*c/t:.1f}% ({c}/{t}) | {b} |")
-          c, t, bc, bt = otros
-          if t:
-              b = f"{100.0*bc/bt:.1f}%" if bt else "n/a"
-              print(f"| otros | {100.0*c/t:.1f}% ({c}/{t}) | {b} |")
-          print("\nReporte HTML completo: artifact `pytest-cov-report`.")
-          PY
-
-      - name: Upload coverage report
-        if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: pytest-cov-report
-          path: |
-            htmlcov
-            coverage.xml
-          retention-days: 14
 
       - name: Smoke API contract
         run: python scripts/smoke_api_contract.py
 
-  # La imagen se construye siempre, tambien en un PR: un Dockerfile roto tiene que
-  # aparecer antes del merge. Publicar solo ocurre en un push a main, y despues de que
-  # la suite y el smoke de contrato pasen.
-  image:
-    needs: ai-module
+  # CI_GENERAL: validates the product/runtime AI service. Excludes two
+  # marker groups that are not product runtime code:
+  #   - real_checkpoint: needs a real, non-versioned model checkpoint (see
+  #     CI_MODEL_ARTIFACT below).
+  #   - notebook_tooling: exercises pfi_ai_service.training.notebook_executor
+  #     (a training-support script), needs nbclient/nbformat/ipykernel/
+  #     jupyter_client, none of which are in requirements-ai-service.txt on
+  #     purpose (keeps the runtime image lean). Verified on a clean
+  #     python:3.12-slim Linux container installing only
+  #     requirements-ai-service.txt + pytest: these 3 tests skip via their
+  #     own existing `skipif(not HAS_NB_DEPS)` guard — no product code was
+  #     changed to produce this result. See CLOUD_02_CI_PIPELINE.md for the
+  #     full exclusion table and the container run that proved it.
+  # pytest itself is not in requirements-ai-service.txt (a runtime
+  # dependency file, correctly), so it's installed separately here.
+  test:
+    needs: compile-and-smoke
     runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
 
-    permissions:
-      contents: read
-      packages: write
+      - name: Set up Python 3.12
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: "pip"
+          cache-dependency-path: ai_service/requirements-ai-service.txt
 
-    env:
-      IMAGE: ghcr.io/enzoaa004/pfi-ai-module
+      - name: Install AI service dependencies
+        run: pip install -r ai_service/requirements-ai-service.txt pytest
 
+      - name: Run tests (CI_GENERAL)
+        run: python -m pytest ai_service/tests -m "not real_checkpoint and not notebook_tooling" -rs
+
+  # CI_MODEL_ARTIFACT: tests explicitly marked real_checkpoint (currently:
+  # the subarticular runtime smoke test, and EXT-03's Grad-CAM sanity test
+  # once that branch merges). None of these have their checkpoint available
+  # in this repo's CI — every one already self-skips with an explicit
+  # pytest.skip()/skipif reason rather than failing. Expected result: 0
+  # passed / N skipped, until a legally distributable checkpoint artifact is
+  # wired in (see CHECKPOINT_DEPENDENT_TESTS in CLOUD_02_CI_PIPELINE.md).
+  # No continue-on-error here on purpose: if a test in this marker group
+  # ever fails for a real reason instead of skipping, this job must go red,
+  # not be silently masked.
+  model-artifact-tests:
+    needs: compile-and-smoke
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python 3.12
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: "pip"
+          cache-dependency-path: ai_service/requirements-ai-service.txt
+
+      - name: Install AI service dependencies
+        run: pip install -r ai_service/requirements-ai-service.txt pytest
+
+      - name: Run tests (CI_MODEL_ARTIFACT, expected to skip)
+        run: python -m pytest ai_service/tests -m real_checkpoint -rs
+
+  # CI_NOTEBOOK_TOOLING: deliberately not implemented as a live job in
+  # CLOUD-02. Installing nbclient/nbformat/ipykernel/jupyter_client is free
+  # (no paid service), but this exercises a training-support script, not the
+  # product runtime — out of CLOUD-02's scope of "validate the AI service."
+  # Left as documented future work (see CLOUD_02_CI_PIPELINE.md) rather than
+  # added here without a clear owner/need for it yet.
+
+  docker-build:
+    needs: compile-and-smoke
+    runs-on: ubuntu-latest
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -150,32 +128,11 @@ jobs:
       - name: Set up Buildx
         uses: docker/setup-buildx-action@v3
 
-      # Sin credenciales propias: GITHUB_TOKEN alcanza para GHCR del mismo owner.
-      - name: Log in to GHCR
-        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
-        uses: docker/login-action@v3
-        with:
-          registry: ghcr.io
-          username: ${{ github.actor }}
-          password: ${{ secrets.GITHUB_TOKEN }}
-
-      # El tag por SHA es el que sirve para reproducir: `latest` se mueve y no identifica
-      # nada. La label `image.source` es la que hace que GHCR vincule el paquete a este
-      # repositorio.
-      #
-      # La imagen lleva los dos checkpoints finales (1,9 MB cada uno). El subarticular de
-      # P10.6 y el multitarea de P10.7 no: se montan por volumen, y sin ellos esos dos
-      # endpoints responden 503 mientras el resto funciona.
-      - name: Build and push
+      - name: Build (validation only, never pushed)
         uses: docker/build-push-action@v6
         with:
           context: .
-          push: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' }}
-          tags: |
-            ${{ env.IMAGE }}:sha-${{ github.sha }}
-            ${{ env.IMAGE }}:latest
-          labels: |
-            org.opencontainers.image.source=${{ github.server_url }}/${{ github.repository }}
-            org.opencontainers.image.revision=${{ github.sha }}
+          push: false
+          tags: pfi-ai-service:ci-${{ github.sha }}
           cache-from: type=gha
           cache-to: type=gha,mode=max

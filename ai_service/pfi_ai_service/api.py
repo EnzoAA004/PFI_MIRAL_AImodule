@@ -35,6 +35,7 @@ from .model_artifacts import artifact_summary, registry_with_artifact_status, ve
 from .model_materializer import sync_model_artifacts
 from .multiplanar_contract import multiplanar_workspace_contract, multiplanar_workspace_contract_v2
 from .pipeline import PipelineRunRequest, run_pipeline
+from .product_orchestration import ProductAnalyzeRequest, run_product_analysis
 from .readiness import build_readiness
 from .report_summary import recent_agent_report_summaries, summarize_agent_report
 from .reporting import build_markdown_summary
@@ -50,6 +51,7 @@ from .disc_degenerative_runtime import (
 )
 from .subarticular_frozen_classifier import SubarticularClassifierError
 from .subarticular_runtime_service import (
+    explain_subarticular_from_registered_roi,
     get_subarticular_runtime_status,
     predict_subarticular_from_registered_roi,
     public_error_message,
@@ -160,6 +162,18 @@ class SubarticularPredictRequest(BaseModel):
     y: float
     side: str
     level: str
+
+
+class SubarticularExplainRequest(BaseModel):
+    model_config = ConfigDict(populate_by_name=True, extra="forbid")
+
+    input_id: str = Field(..., alias="inputId", min_length=1)
+    instance_number: int = Field(..., alias="instanceNumber", ge=0)
+    x: float
+    y: float
+    side: str
+    level: str
+    target_class: str | None = Field(default=None, alias="targetClass")
 
 
 def read_agent_report(run_id: str) -> dict[str, Any]:
@@ -338,6 +352,57 @@ def subarticular_predict(request: SubarticularPredictRequest, http_request: Requ
     })
 
 
+@app.post("/degenerative-findings/subarticular/explain")
+def subarticular_explain(request: SubarticularExplainRequest, http_request: Request):
+    """EXT-03: Grad-CAM heatmap for the subarticular classifier's own prediction on this ROI.
+    Read-only w.r.t. the frozen checkpoint (see gradcam.py's own docstring). The heatmap is
+    returned as a small base64-encoded 224x224 PNG, never an inline raw array -- resolution is
+    fixed and modest by construction, so this never becomes a large-blob response."""
+    try:
+        result = explain_subarticular_from_registered_roi(
+            input_id=request.input_id,
+            instance_number=request.instance_number,
+            x=request.x,
+            y=request.y,
+            side=request.side,
+            level=request.level,
+            target_class=request.target_class,
+        )
+    except SubarticularClassifierError as exc:
+        status_code, code = public_error_status(exc)
+        trace_id = request_trace_id(http_request)
+        return JSONResponse(
+            status_code=status_code,
+            headers={TRACE_ID_HEADER: trace_id},
+            content=clean_for_json({
+                "status": "error",
+                "code": code,
+                "message": public_error_message(code),
+                "traceId": trace_id,
+                "path": http_request.url.path,
+                "method": http_request.method,
+                "humanReviewRequired": True,
+                "notClinicalDiagnosis": True,
+            }),
+        )
+    return clean_for_json({
+        **result.to_metadata(),
+        "heatmapPng": _heatmap_to_base64_png(result.heatmap),
+    })
+
+
+def _heatmap_to_base64_png(heatmap) -> str:
+    import base64
+    import io
+
+    from PIL import Image
+
+    pixels = (heatmap * 255.0).clip(0, 255).astype("uint8")
+    buffer = io.BytesIO()
+    Image.fromarray(pixels, mode="L").save(buffer, format="PNG")
+    return base64.b64encode(buffer.getvalue()).decode("ascii")
+
+
 @app.post("/degenerative-findings/disc-multitask/predict")
 def disc_multitask_predict(request: DiscMultitaskPredictRequest, http_request: Request):
     try:
@@ -412,6 +477,11 @@ def inference_axial(request: PipelineRunRequest):
 def pipeline_run(request: PipelineRunRequest, http_request: Request):
     traced_request = with_trace_metadata(request, request_trace_id(http_request))
     return clean_for_json(run_pipeline(traced_request))
+
+
+@app.post("/v1/product/analyze")
+def product_analyze(request: ProductAnalyzeRequest, http_request: Request):
+    return clean_for_json(run_product_analysis(request, trace_id=request_trace_id(http_request)))
 
 
 

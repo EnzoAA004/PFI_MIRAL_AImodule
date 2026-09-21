@@ -361,6 +361,7 @@ class StructuredAiErrorV2(PublicResponseModel):
         "MODEL_PLANE_MISMATCH",
         "MODEL_NOT_READY",
         "REAL_INFERENCE_FAILED",
+        "UNSUPPORTED_INPUT",
         "UNSUPPORTED_INFERENCE_MODE",
         "CONTRACT_FALLBACK_DISABLED",
         "INVALID_MULTIPLANAR_RESPONSE",
@@ -371,3 +372,4 @@ class StructuredAiErrorV2(PublicResponseModel):
     requestedPlanes: list[PlaneNameV2] = Field(default_factory=list)
     details: dict[str, Any] = Field(default_factory=dict)
     governance: GovernanceV2
+
