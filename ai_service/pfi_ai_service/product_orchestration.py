@@ -199,7 +199,8 @@ def run_product_analysis(request: ProductAnalyzeRequest, *, trace_id: str | None
             warnings.append(f"{plane}_pipeline_unavailable:{type(exc).__name__}")
             planes[plane] = unavailable_plane(plane, input_id, "pipeline_unavailable")
 
-    disc_levels = build_disc_levels(planes, request.capabilities, warnings)
+    demo_case_id = request.case_id if is_demo_fixture_request(request.metadata) else None
+    disc_levels = build_disc_levels(planes, request.capabilities, warnings, demo_case_id=demo_case_id)
     has_available_plane = any(
         isinstance(plane, dict) and plane.get("status") != "unavailable"
         for plane in planes.values()
@@ -302,7 +303,7 @@ def product_status(
     if failures:
         return "partial"
     if capabilities.absoluteDiscLocalization67B2:
-        if any(level.get("localization", {}).get("status") in {"adapter_pending", "abstained", "unavailable"} for level in disc_levels):
+        if any(level.get("localization", {}).get("status") in {"adapter_pending", "abstained", "unavailable", "demo_fixture"} for level in disc_levels):
             return "partial"
     if capabilities.axialPairing67C:
         if any(
@@ -371,20 +372,87 @@ def mask_classes(masks: list[Any], plane: str) -> list[str]:
     return classes
 
 
-def build_disc_levels(planes: dict[str, Any], capabilities: ProductCapabilities, warnings: list[str]) -> list[dict[str, Any]]:
+def build_disc_levels(
+    planes: dict[str, Any],
+    capabilities: ProductCapabilities,
+    warnings: list[str],
+    *,
+    demo_case_id: str | None = None,
+) -> list[dict[str, Any]]:
     sagittal = planes.get("sagittal") if isinstance(planes.get("sagittal"), dict) else {}
     axial = planes.get("axial") if isinstance(planes.get("axial"), dict) else {}
     localization = localization_result(sagittal, capabilities)
     localization_status = str(localization.get("status"))
-    levels = [localization.get("level")]
     if localization_status == "unavailable":
         warnings.extend(str(item) for item in localization.get("warnings", []))
+        if demo_case_id is not None:
+            # 67B2 genuinely has no proven parity artifact (see
+            # absolute_disc_localization_runtime.runtime_status) -- this never overrides a
+            # real localized/abstained result, only the "nothing to show" case, and only when
+            # the caller explicitly opted in via metadata.mode=="demo".
+            localization = demo_fixture_localization(demo_case_id)
+            localization_status = str(localization.get("status"))
+            warnings.append(DEMO_FIXTURE_WARNING)
     elif localization_status == "abstained":
         warnings.append("67B2_localization_abstained")
+    levels = [localization.get("level")]
     return [
-        disc_level_payload(level, localization, sagittal, axial, capabilities)
+        disc_level_payload(level, localization, sagittal, axial, capabilities, demo_case_id=demo_case_id)
         for level in levels
     ]
+
+
+DEMO_FIXTURE_SOURCE = "DEMO_FIXTURE"
+DEMO_FIXTURE_LEVEL = "L4-L5"
+DEMO_FIXTURE_WARNING = "DEMO_FIXTURE_LOCALIZATION_NOT_REAL_INFERENCE"
+
+
+def is_demo_fixture_request(metadata: dict[str, Any]) -> bool:
+    return str((metadata or {}).get("mode", "")).strip().lower() == "demo"
+
+
+def demo_fixture_major_axis_mm(case_id: str) -> float:
+    """Deterministic, non-clinical value. Mirrors demoMajorAxisMm in
+    docker/post-e50-mocks/mock-ai.mjs so the post-e50 mock stack and this module's demo
+    path agree on the same seeded values for the same caseId convention."""
+    normalized = (case_id or "").upper()
+    if "DEMO-LUMBAR-2026-01" in normalized:
+        return 11.9
+    if "DEMO-LUMBAR-2026-02" in normalized:
+        return 12.3
+    if "DEMO-LUMBAR-2026-03" in normalized:
+        return 13.1
+    return 12.3
+
+
+def demo_fixture_localization(case_id: str) -> dict[str, Any]:
+    """Never a substitute for 67B2: status is "demo_fixture" (never "localized") and source
+    is DEMO_FIXTURE_SOURCE (never "67B2"), so a consumer that only checks status/source
+    cannot mistake this for real inference."""
+    return {
+        "status": "demo_fixture",
+        "level": DEMO_FIXTURE_LEVEL,
+        "source": DEMO_FIXTURE_SOURCE,
+        "validated": False,
+        "abstentionPreserved": False,
+        "confidence": None,
+        "modelSha256": None,
+        "centroidPatientXYZ": None,
+        "warnings": [DEMO_FIXTURE_WARNING],
+    }
+
+
+def demo_fixture_measurement(case_id: str, level: str | None) -> dict[str, Any]:
+    major_axis_mm = demo_fixture_major_axis_mm(case_id)
+    return {
+        "plane": "sagittal",
+        "level": level,
+        "structure": "disc",
+        "areaMm2": major_axis_mm,
+        "majorAxisMm": major_axis_mm,
+        "minorAxisMm": 8.4,
+        "reviewRequired": HUMAN_REVIEW_REQUIRED,
+    }
 
 
 def localization_result(sagittal: dict[str, Any], capabilities: ProductCapabilities) -> dict[str, Any]:
@@ -409,16 +477,21 @@ def disc_level_payload(
     sagittal: dict[str, Any],
     axial: dict[str, Any],
     capabilities: ProductCapabilities,
+    *,
+    demo_case_id: str | None = None,
 ) -> dict[str, Any]:
     localization_status = str(localization.get("status"))
     pairing = pairing_result(level, localization, axial, capabilities)
     pairing_status = str(pairing.get("status"))
+    measurements = measurements_for_level(level, sagittal, axial)
+    if demo_case_id is not None and localization.get("source") == DEMO_FIXTURE_SOURCE:
+        measurements = [*measurements, demo_fixture_measurement(demo_case_id, level)]
     return {
         "level": level,
         "localization": {
             "status": localization_status,
-            "validated": True,
-            "source": "67B2",
+            "validated": bool(localization.get("validated", True)),
+            "source": str(localization.get("source") or "67B2"),
             "abstentionPreserved": localization_status == "abstained",
             "adapterPending": False,
             "confidence": localization.get("confidence"),
@@ -437,7 +510,7 @@ def disc_level_payload(
             "geometry": pairing.get("geometry"),
             "warnings": pairing.get("warnings", []),
         },
-        "measurements": measurements_for_level(level, sagittal, axial),
+        "measurements": measurements,
         "degenerativeFindings": {
             "status": "blocked_preprocessing_parity",
             "automaticInferenceEnabled": False,

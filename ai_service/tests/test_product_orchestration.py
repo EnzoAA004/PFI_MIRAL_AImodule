@@ -58,11 +58,19 @@ def install_fakes(monkeypatch, *, payloads: dict[str, dict[str, Any]] | None = N
     monkeypatch.setattr("pfi_ai_service.product_orchestration.InputRegistryError", FakeInputRegistryError)
 
 
-def run_default(monkeypatch, *, payloads: dict[str, dict[str, Any]] | None = None, capabilities: ProductCapabilities | None = None, fail_planes: set[str] | None = None) -> dict[str, Any]:
+def run_default(
+    monkeypatch,
+    *,
+    payloads: dict[str, dict[str, Any]] | None = None,
+    capabilities: ProductCapabilities | None = None,
+    fail_planes: set[str] | None = None,
+    case_id: str = "CASE-PRODUCT-72",
+    extra_metadata: dict[str, Any] | None = None,
+) -> dict[str, Any]:
     install_fakes(monkeypatch, payloads=payloads, fail_planes=fail_planes)
     return run_product_analysis(
         ProductAnalyzeRequest(
-            caseId="CASE-PRODUCT-72",
+            caseId=case_id,
             sagittalInputId="inp_sag",
             axialInputId="inp_ax",
             capabilities=capabilities or ProductCapabilities(),
@@ -73,6 +81,7 @@ def run_default(monkeypatch, *, payloads: dict[str, dict[str, Any]] | None = Non
                 "SeriesInstanceUID": "1.2.4",
                 "SOPInstanceUID": "1.2.5",
                 "patientId": "PAT-FORBIDDEN",
+                **(extra_metadata or {}),
             },
         ),
         trace_id="trace-product-72",
@@ -152,6 +161,70 @@ def test_67b2_never_fabricates_a_level_without_runtime_output(monkeypatch) -> No
     body = run_default(monkeypatch)
 
     assert [item["level"] for item in body["discLevels"]] == [None]
+
+
+def test_real_path_without_demo_metadata_stays_unavailable(monkeypatch) -> None:
+    """No anatomy fabrication: metadata.mode absent (or anything other than "demo") must
+    behave exactly like the pre-existing real path -- level stays None, source stays 67B2."""
+    body = run_default(monkeypatch, extra_metadata={"mode": "clinical"})
+    level = body["discLevels"][0]
+
+    assert level["level"] is None
+    assert level["localization"]["status"] == "unavailable"
+    assert level["localization"]["source"] == "67B2"
+    assert level["localization"]["validated"] is True
+    assert not any(m.get("majorAxisMm") is not None for m in level["measurements"])
+
+
+def test_demo_fixture_produces_labeled_non_real_level(monkeypatch) -> None:
+    body = run_default(monkeypatch, case_id="DEMO-LUMBAR-2026-01", extra_metadata={"mode": "demo"})
+    level = body["discLevels"][0]
+
+    assert level["level"] == "L4-L5"
+    assert level["localization"]["status"] == "demo_fixture"
+    assert level["localization"]["source"] == "DEMO_FIXTURE"
+    assert level["localization"]["validated"] is False
+    assert "DEMO_FIXTURE_LOCALIZATION_NOT_REAL_INFERENCE" in body["warnings"]
+    # the real 67B2 warning stays too -- the demo fallback never hides *why* it engaged.
+    assert "67B2_RUNTIME_PARITY_NOT_PROVEN" in body["warnings"]
+
+
+def test_demo_fixture_measurement_is_deterministic_per_case(monkeypatch) -> None:
+    for case_id, expected in (
+        ("DEMO-LUMBAR-2026-01", 11.9),
+        ("DEMO-LUMBAR-2026-02", 12.3),
+        ("DEMO-LUMBAR-2026-03", 13.1),
+    ):
+        body = run_default(monkeypatch, case_id=case_id, extra_metadata={"mode": "demo"})
+        demo_measurement = next(m for m in body["discLevels"][0]["measurements"] if m.get("majorAxisMm") is not None)
+        assert demo_measurement["majorAxisMm"] == expected
+        assert demo_measurement["areaMm2"] == expected
+        assert demo_measurement["level"] == "L4-L5"
+
+
+def test_demo_fixture_never_enables_p10_7_or_validates_67c(monkeypatch) -> None:
+    body = run_default(monkeypatch, case_id="DEMO-LUMBAR-2026-01", extra_metadata={"mode": "demo"})
+    level = body["discLevels"][0]
+
+    assert level["degenerativeFindings"]["status"] == "blocked_preprocessing_parity"
+    assert level["degenerativeFindings"]["automaticInferenceEnabled"] is False
+    assert level["axialPairing"]["validated"] is False
+
+
+def test_demo_fixture_does_not_override_a_real_localized_result(monkeypatch) -> None:
+    """The demo fallback only fills the "nothing to show" gap -- a real 67B2 localization
+    (however unlikely in this codebase today) is never replaced by demo data."""
+    body = run_default(
+        monkeypatch,
+        case_id="DEMO-LUMBAR-2026-01",
+        extra_metadata={"mode": "demo"},
+        payloads={"sagittal": {"localization": {"status": "localized", "level": "L2-L3", "source": "67B2", "parityVerified": True}}},
+    )
+    level = body["discLevels"][0]
+
+    assert level["level"] == "L2-L3"
+    assert level["localization"]["source"] == "67B2"
+    assert level["localization"]["status"] == "localized"
 
 
 def test_localized_level_only_comes_from_pipeline_localization(monkeypatch) -> None:
