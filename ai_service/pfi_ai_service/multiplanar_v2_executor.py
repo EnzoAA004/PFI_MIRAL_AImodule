@@ -43,6 +43,7 @@ from .multiplanar_v2_models import (
     WorkspaceModeV2,
 )
 from .multiplanar_run import MultiplanarRunRequest
+from .real_inference_runtime import UnsupportedInputError
 
 log = logging.getLogger(__name__)
 
@@ -182,7 +183,28 @@ class CanonicalMultiplanarExecutor:
                 )
             except MultiplanarV2Error:
                 raise
+            except UnsupportedInputError as exc:
+                raise MultiplanarV2Error(
+                    "UNSUPPORTED_INPUT",
+                    "Input no soportado para inferencia real baseline.",
+                    status_code=422,
+                    trace_id=trace_id,
+                    case_id=request.caseId,
+                    requested_planes=requested_planes,
+                    details={"plane": plane, "reason": str(exc)},
+                ) from exc
             except Exception as exc:
+                unsupported = find_unsupported_input_error(exc)
+                if unsupported is not None:
+                    raise MultiplanarV2Error(
+                        "UNSUPPORTED_INPUT",
+                        "Input no soportado para inferencia real baseline.",
+                        status_code=422,
+                        trace_id=trace_id,
+                        case_id=request.caseId,
+                        requested_planes=requested_planes,
+                        details={"plane": plane, "reason": str(unsupported)},
+                    ) from exc
                 if not request.allowContractFallback:
                     raise MultiplanarV2Error(
                         "REAL_INFERENCE_FAILED",
@@ -901,6 +923,17 @@ def synthetic_plane_run_id(plane: PlaneNameV2, plane_spec: PlaneExecutionV2Reque
     return "synthetic-" + sha256(raw.encode("utf-8")).hexdigest()[:16]
 
 
+
+def find_unsupported_input_error(exc: BaseException) -> UnsupportedInputError | None:
+    seen: set[int] = set()
+    current: BaseException | None = exc
+    while current is not None and id(current) not in seen:
+        if isinstance(current, UnsupportedInputError):
+            return current
+        seen.add(id(current))
+        current = current.__cause__ or current.__context__
+    return None
+
 def sanitize_fallback_reason(value: str) -> str:
     return "".join(char if char.isalnum() or char in "._:-" else "_" for char in value)[:120]
 
@@ -1229,3 +1262,8 @@ def exception_to_v2(exc: Exception, *, trace_id: str, case_id: str | None, reque
         requested_planes=requested_planes,
         details={"type": type(exc).__name__},
     )
+
+
+
+
+

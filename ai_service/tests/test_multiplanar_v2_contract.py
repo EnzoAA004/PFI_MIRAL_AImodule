@@ -10,6 +10,7 @@ from fastapi.testclient import TestClient
 
 from pfi_ai_service.api import app
 from pfi_ai_service.asset_registry import clear_asset_registry, register_run_assets
+from pfi_ai_service.real_inference_runtime import UnsupportedInputError, load_input
 
 
 def configure(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
@@ -389,6 +390,38 @@ def test_v2_real_failure_without_fallback_is_error(monkeypatch: pytest.MonkeyPat
     assert response.status_code == 500
     assert response.json()["code"] == "REAL_INFERENCE_FAILED"
 
+
+
+def test_load_input_invalid_dicom_raises_unsupported_input(tmp_path: Path) -> None:
+    invalid = tmp_path / "invalid.dcm"
+    invalid.write_bytes(b"not a dicom with pixel metadata")
+
+    with pytest.raises(UnsupportedInputError, match="dicom_pixel_data_unreadable"):
+        load_input(str(invalid), "sagittal")
+
+
+
+def test_v2_unsupported_input_is_422_not_500(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    configure(monkeypatch, tmp_path)
+    monkeypatch.setattr("pfi_ai_service.multiplanar_v2_executor.model_status", lambda key, info: ready_model(key, info["plane"], ready=True))
+    monkeypatch.setattr("pfi_ai_service.multiplanar_v2_executor.run_pipeline", lambda request: (_ for _ in ()).throw(UnsupportedInputError("dicom_pixel_data_unreadable")))
+    client = TestClient(app)
+    case_id = "CASE-P0-UNSUPPORTED-INPUT"
+    sagittal_id = register_input(client, case_id, "sagittal")
+    response = client.post(
+        "/v2/multiplanar/run",
+        json={
+            "caseId": case_id,
+            "traceId": "trace-p0-unsupported-input",
+            "inferenceMode": "real_baseline",
+            "allowContractFallback": False,
+            "planes": {"sagittal": {"inputId": sagittal_id, "modelKey": "sagittal_spider"}, "axial": None},
+        },
+    )
+    assert response.status_code == 422, response.text
+    body = response.json()
+    assert body["code"] == "UNSUPPORTED_INPUT"
+    assert body["details"] == {"plane": "sagittal", "reason": "dicom_pixel_data_unreadable"}
 
 def test_v2_invalid_json_and_non_object_body_are_400(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     configure(monkeypatch, tmp_path)
@@ -781,3 +814,5 @@ def fake_v2_response(case_id: str, trace_id: str):
         synthetic=True,
         fallbackReason="explicit_contract_mode",
     )
+
+

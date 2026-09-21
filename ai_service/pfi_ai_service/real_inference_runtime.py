@@ -47,6 +47,10 @@ class LoadedInput:
     metadata: Dict[str, Any]
 
 
+class UnsupportedInputError(ValueError):
+    """Raised when an accepted upload extension contains unreadable image data."""
+
+
 _MODEL_CACHE: dict[str, CachedModel] = {}
 
 
@@ -332,7 +336,10 @@ def load_input(input_path: str, plane: str) -> LoadedInput:
         except Exception as exc:
             raise ImportError("pydicom es requerido para archivos DICOM") from exc
         dataset = pydicom.dcmread(str(path), force=True)
-        array = dataset.pixel_array
+        try:
+            array = dataset.pixel_array
+        except Exception as exc:
+            raise UnsupportedInputError("dicom_pixel_data_unreadable") from exc
         pixel_spacing = getattr(dataset, "PixelSpacing", None)
         if pixel_spacing is not None and len(pixel_spacing) >= 2:
             spacing = (float(pixel_spacing[1]), float(pixel_spacing[0]))
@@ -2201,3 +2208,6 @@ def run_real_inference(request: Any, run_id: str) -> Dict[str, Any]:
             "diagnosisGenerated": False,
         },
     }
+
+
+
