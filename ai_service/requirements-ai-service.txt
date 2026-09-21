@@ -9,7 +9,7 @@ httpx
 --extra-index-url https://download.pytorch.org/whl/cpu
 torch==2.13.0+cpu
 torchvision==0.28.0+cpu
-pydicom>=2.4
+pydicom>=3.0.2
 SimpleITK>=2.3
 # Construye los objetos DICOM SEG conformes al estandar. Escribir el contrato de
 # Segmentation a mano sobre pydicom -frames por segmento, PerFrameFunctionalGroups,
