@@ -17,3 +17,4 @@ SimpleITK>=2.3
 # solo aparecen cuando un visor externo lo rechaza. Ver dicom_seg.py.
 highdicom>=0.22
 timm==1.0.28
+google-cloud-storage>=2.16

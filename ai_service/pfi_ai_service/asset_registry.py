@@ -1,10 +1,15 @@
 from __future__ import annotations
 
+import hashlib
+import json
 import re
+from datetime import datetime, timezone
 from urllib.parse import unquote
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Literal
+
+from .object_storage import ObjectStorageError, get_object_storage
 
 ALLOWED_ASSET_NAMES = frozenset({"input.png", "mask.npy", "confidence.npy", "overlay.png", "mask-preview.png", "lumbar-3d-mesh.json"})
 PUBLIC_BROWSER_ASSET_NAMES = frozenset({"input.png", "overlay.png", "mask-preview.png", "lumbar-3d-mesh.json"})
@@ -58,6 +63,10 @@ class AssetRecord:
     asset_name: str
     path: Path
     size: int
+    content_type: str = "application/octet-stream"
+    object_key: str | None = None
+    sha256: str | None = None
+    storage_provider: str = "filesystem"
 
 
 _ASSET_REGISTRY: dict[tuple[str, str, str], AssetRecord] = {}
@@ -68,6 +77,7 @@ def clear_asset_registry() -> None:
 
 
 def register_run_assets(run_id: str, plane: str, outputs: dict[str, str]) -> dict[str, dict[str, object]]:
+    normalized_run_id = validate_run_id(run_id)
     normalized_plane = validate_plane(plane)
     registered: dict[str, dict[str, object]] = {}
     for raw_path in outputs.values():
@@ -77,14 +87,20 @@ def register_run_assets(run_id: str, plane: str, outputs: dict[str, str]) -> dic
             continue
         if not path.exists() or not path.is_file():
             continue
+        stored = persist_asset_file(normalized_run_id, normalized_plane, asset_name, path)
         record = AssetRecord(
-            run_id=run_id,
+            run_id=normalized_run_id,
             plane=normalized_plane,  # type: ignore[arg-type]
             asset_name=asset_name,
-            path=path,
-            size=path.stat().st_size,
+            path=stored.local_path or path,
+            size=stored.size_bytes,
+            content_type=stored.content_type,
+            object_key=stored.object_key,
+            sha256=stored.sha256,
+            storage_provider=stored.provider,
         )
-        _ASSET_REGISTRY[(run_id, normalized_plane, asset_name)] = record
+        _ASSET_REGISTRY[(normalized_run_id, normalized_plane, asset_name)] = record
+        persist_asset_index(record)
         registered[asset_name] = public_asset_metadata(record)
     return registered
 
@@ -97,22 +113,30 @@ def register_workspace_asset(run_id: str, asset_name: str, path: Path) -> dict[s
     expected_path = workspace_asset_path(normalized_run_id, normalized_asset)
     if path.resolve() != expected_path:
         raise AssetRegistryError("ruta de asset workspace invalida", status_code=400)
+    stored = persist_asset_file(normalized_run_id, "workspace", normalized_asset, expected_path)
     record = AssetRecord(
         run_id=normalized_run_id,
         plane="workspace",
         asset_name=normalized_asset,
-        path=expected_path,
-        size=path.stat().st_size,
+        path=stored.local_path or expected_path,
+        size=stored.size_bytes,
+        content_type=stored.content_type,
+        object_key=stored.object_key,
+        sha256=stored.sha256,
+        storage_provider=stored.provider,
     )
     _ASSET_REGISTRY[(normalized_run_id, "workspace", normalized_asset)] = record
+    persist_asset_index(record)
     return public_asset_metadata(record)
 
 
 def resolve_run_asset(run_id: str, plane: str, asset_name: str) -> AssetRecord:
     normalized_plane = validate_plane(plane)
     normalized_asset = validate_asset_name(asset_name)
-    normalized_run_id = validate_run_id(run_id) if normalized_plane == "workspace" else run_id
+    normalized_run_id = validate_run_id(run_id)
     record = _ASSET_REGISTRY.get((normalized_run_id, normalized_plane, normalized_asset))
+    if record is None:
+        record = rehydrate_run_asset(normalized_run_id, normalized_plane, normalized_asset)
     if record is None and normalized_plane == "workspace" and normalized_asset == "lumbar-3d-mesh.json":
         record = rehydrate_workspace_asset(normalized_run_id, normalized_asset)
     if record is None:
@@ -133,8 +157,17 @@ def rehydrate_workspace_asset(run_id: str, asset_name: str) -> AssetRecord | Non
         asset_name=asset_name,
         path=path,
         size=path.stat().st_size,
+        content_type=content_type_for_asset(asset_name),
     )
     _ASSET_REGISTRY[(normalized_run_id, "workspace", asset_name)] = record
+    return record
+
+
+def rehydrate_run_asset(run_id: str, plane: str, asset_name: str) -> AssetRecord | None:
+    record = load_asset_index_record(run_id, plane, asset_name)
+    if record is None:
+        return None
+    _ASSET_REGISTRY[(record.run_id, record.plane, record.asset_name)] = record
     return record
 
 
@@ -172,20 +205,28 @@ def workspace_asset_path(run_id: str, asset_name: str) -> Path:
 
 
 def public_asset_metadata(record: AssetRecord) -> dict[str, object]:
-    return {
+    metadata: dict[str, object] = {
         "runId": record.run_id,
         "plane": record.plane,
         "assetName": record.asset_name,
         "size": record.size,
     }
+    if record.object_key:
+        metadata["objectKey"] = record.object_key
+        metadata["storageProvider"] = record.storage_provider
+        metadata["contentType"] = record.content_type
+        metadata["sha256"] = record.sha256 or ""
+    return metadata
 
 
 def registered_assets_for_run(run_id: str, plane: str) -> dict[str, dict[str, object]]:
     normalized_plane = validate_plane(plane)
+    normalized_run_id = validate_run_id(run_id)
+    rehydrate_assets_for_run(normalized_run_id, normalized_plane)
     return {
         asset_name: public_asset_metadata(record)
         for (stored_run_id, stored_plane, asset_name), record in sorted(_ASSET_REGISTRY.items())
-        if stored_run_id == run_id and stored_plane == normalized_plane
+        if stored_run_id == normalized_run_id and stored_plane == normalized_plane
     }
 
 
@@ -208,3 +249,147 @@ def validate_asset_name(asset_name: str) -> str:
 def is_public_browser_asset(asset_name: str) -> bool:
     normalized = validate_asset_name(asset_name)
     return normalized in PUBLIC_BROWSER_ASSET_NAMES or is_slice_asset_name(normalized) or is_class_mask_asset_name(normalized)
+
+
+def persist_asset_file(run_id: str, plane: str, asset_name: str, path: Path):
+    object_key = asset_object_key(run_id, plane, asset_name)
+    try:
+        return get_object_storage().put_file(path, object_key, content_type_for_asset(asset_name))
+    except ObjectStorageError as exc:
+        raise AssetRegistryError(exc.message, status_code=500) from exc
+
+
+def asset_object_key(run_id: str, plane: str, asset_name: str) -> str:
+    normalized_run_id = validate_run_id(run_id)
+    normalized_plane = validate_plane(plane)
+    normalized_asset = validate_asset_name(asset_name)
+    return f"runs/{normalized_run_id}/{normalized_plane}/{normalized_asset}"
+
+
+def asset_index_root() -> Path:
+    from .settings import get_settings
+
+    return (get_settings().output_dir / "asset_registry").resolve()
+
+
+def asset_index_path(run_id: str, plane: str) -> Path:
+    normalized_run_id = validate_run_id(run_id)
+    normalized_plane = validate_plane(plane)
+    root = asset_index_root()
+    path = (root / normalized_run_id / f"{normalized_plane}.json").resolve()
+    if path.parent.parent != root:
+        raise AssetRegistryError("ruta de indice de asset invalida", status_code=403)
+    return path
+
+
+def persist_asset_index(record: AssetRecord) -> None:
+    path = asset_index_path(record.run_id, record.plane)
+    existing: dict[str, object] = {}
+    try:
+        existing_raw = json.loads(path.read_text(encoding="utf-8"))
+        if isinstance(existing_raw, dict):
+            existing = existing_raw
+    except (OSError, ValueError):
+        existing = {}
+    assets = existing.get("assets")
+    if not isinstance(assets, dict):
+        assets = {}
+    assets[record.asset_name] = {
+        "runId": record.run_id,
+        "plane": record.plane,
+        "assetName": record.asset_name,
+        "objectKey": record.object_key,
+        "contentType": record.content_type,
+        "sizeBytes": record.size,
+        "sha256": record.sha256,
+        "storageProvider": record.storage_provider,
+        "createdAt": datetime.now(timezone.utc).isoformat(),
+    }
+    payload = {
+        "schemaVersion": "pfi.ai.asset-registry.v1",
+        "runId": record.run_id,
+        "plane": record.plane,
+        "assets": assets,
+    }
+    try:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        temporary = path.with_suffix(".json.tmp")
+        temporary.write_text(json.dumps(payload, sort_keys=True), encoding="utf-8")
+        temporary.replace(path)
+    except OSError as exc:
+        raise AssetRegistryError("no se pudo persistir indice de asset", status_code=500) from exc
+
+
+def load_asset_index_record(run_id: str, plane: str, asset_name: str) -> AssetRecord | None:
+    path = asset_index_path(run_id, plane)
+    try:
+        raw = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return None
+    assets = raw.get("assets") if isinstance(raw, dict) else None
+    item = assets.get(asset_name) if isinstance(assets, dict) else None
+    if not isinstance(item, dict):
+        return None
+    object_key = item.get("objectKey")
+    if not isinstance(object_key, str) or not object_key.strip():
+        return None
+    try:
+        storage = get_object_storage()
+    except ObjectStorageError as exc:
+        raise AssetRegistryError(exc.message, status_code=500) from exc
+    local_path = storage.local_path(object_key)
+    if local_path is None or not local_path.is_file():
+        return None
+    expected_sha256 = str(item.get("sha256", ""))
+    if expected_sha256 and _sha256_file(local_path) != expected_sha256:
+        raise AssetRegistryError("checksum de asset no coincide", status_code=500)
+    return AssetRecord(
+        run_id=validate_run_id(str(item.get("runId", run_id))),
+        plane=validate_plane(str(item.get("plane", plane))),  # type: ignore[arg-type]
+        asset_name=validate_asset_name(str(item.get("assetName", asset_name))),
+        path=local_path,
+        size=int(item.get("sizeBytes", local_path.stat().st_size) or local_path.stat().st_size),
+        content_type=str(item.get("contentType", content_type_for_asset(asset_name))),
+        object_key=object_key,
+        sha256=expected_sha256,
+        storage_provider=str(item.get("storageProvider", "filesystem")),
+    )
+
+
+def _sha256_file(path: Path) -> str:
+    digest = hashlib.sha256()
+    with path.open("rb") as handle:
+        for chunk in iter(lambda: handle.read(1024 * 1024), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
+
+
+def rehydrate_assets_for_run(run_id: str, plane: str) -> None:
+    path = asset_index_path(run_id, plane)
+    try:
+        raw = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return
+    assets = raw.get("assets") if isinstance(raw, dict) else None
+    if not isinstance(assets, dict):
+        return
+    for name in assets:
+        if not isinstance(name, str):
+            continue
+        try:
+            record = load_asset_index_record(run_id, plane, name)
+        except AssetRegistryError:
+            continue
+        if record is not None:
+            _ASSET_REGISTRY[(record.run_id, record.plane, record.asset_name)] = record
+
+
+def content_type_for_asset(asset_name: str) -> str:
+    normalized = validate_asset_name(asset_name)
+    if normalized.endswith(".png"):
+        return "image/png"
+    if normalized.endswith(".json"):
+        return "application/json"
+    if normalized.endswith(".npy") or normalized.endswith(".raw"):
+        return "application/octet-stream"
+    return "application/octet-stream"
