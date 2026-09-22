@@ -64,6 +64,17 @@ def test_get_asset_serves_allowed_png(monkeypatch, tmp_path) -> None:
     assert len(response.content) > 0
 
 
+def test_get_asset_rehydrates_after_registry_clear(monkeypatch, tmp_path) -> None:
+    body = run_sagittal_fixture(monkeypatch, tmp_path)
+    clear_asset_registry()
+
+    response = client.get(f"/assets/{body['runId']}/sagittal/overlay.png")
+
+    assert response.status_code == 200, response.text
+    assert response.headers["content-type"].startswith("image/png")
+    assert len(response.content) > 0
+
+
 def test_get_asset_rejects_traversal_and_disallowed_asset(monkeypatch, tmp_path) -> None:
     body = run_sagittal_fixture(monkeypatch, tmp_path)
 
