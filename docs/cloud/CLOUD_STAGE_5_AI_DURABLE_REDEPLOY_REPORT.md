@@ -273,6 +273,15 @@ if ever required.
 
 ## 13. Summary
 
+> **Update 2026-09-23 (Stage 5B):** the rehydration gap documented below
+> was root-caused and fixed in
+> [`CLOUD_STAGE_5B_GCS_REHYDRATION_FIX_REPORT.md`](CLOUD_STAGE_5B_GCS_REHYDRATION_FIX_REPORT.md).
+> Fresh-process rehydration now passes live with exact checksum matches
+> (commit `c854f0e`, revision `pfi-ai-module-00006-ppg`).
+> `READY_FOR_BACKEND_AI_AUTH_INTEGRATION` is now **YES** as of Stage 5B,
+> superseding the NO recorded below.
+
+
 | Check | Result |
 |---|---|
 | Source state matches expected commit | PASS |
