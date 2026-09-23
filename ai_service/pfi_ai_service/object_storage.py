@@ -50,6 +50,9 @@ class ObjectStorage:
     def local_path(self, object_key: str) -> Path | None:
         return None
 
+    def list_keys(self, prefix: str) -> list[str]:
+        return []
+
 
 class FilesystemObjectStorage(ObjectStorage):
     provider: StorageProviderName = "filesystem"
@@ -210,6 +213,12 @@ class GoogleCloudStorageObjectStorage(ObjectStorage):
         if not path.is_relative_to(self.cache_root):
             raise ObjectStorageError("object key escapes cache root")
         return path
+
+    def list_keys(self, prefix: str) -> list[str]:
+        normalized = str(prefix or "").strip().replace("\\", "/")
+        if not normalized or normalized.startswith("/") or ".." in normalized:
+            raise ObjectStorageError("object key prefix is invalid")
+        return [blob.name for blob in self.bucket.list_blobs(prefix=normalized)]
 
 
 def get_object_storage() -> ObjectStorage:

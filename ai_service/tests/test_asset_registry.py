@@ -432,6 +432,36 @@ def test_asset_registry_gcs_rehydration_fails_clearly_on_checksum_mismatch(monke
     assert "checksum" in exc_info.value.message
 
 
+def test_asset_registry_gcs_persists_one_immutable_meta_key_per_asset(monkeypatch, tmp_path) -> None:
+    # pfi-ai-runtime solo tiene storage.objectCreator (create) + objectViewer
+    # (get/list) en el bucket durable, no permiso de sobrescritura: si dos
+    # assets del mismo run/plane terminaran compartiendo una unica clave de
+    # indice mutable, la segunda escritura fallaria con 403 en GCS real (el
+    # fake de este test no simula esa restriccion de IAM, por eso se verifica
+    # aqui explicitamente que cada asset obtiene su propia clave nunca
+    # reescrita, en vez de depender de que el fake la reproduzca).
+    backing: dict[str, bytes] = {}
+    run_id = "run-immutable-keys-006"
+    plane = "sagittal"
+
+    _write_via_simulated_process(
+        monkeypatch,
+        tmp_path,
+        "writer",
+        backing,
+        run_id,
+        plane,
+        {"overlay.png": b"overlay-bytes", "mask.npy": b"mask-bytes"},
+    )
+
+    overlay_key = asset_registry_module.asset_meta_object_key(run_id, plane, "overlay.png")
+    mask_key = asset_registry_module.asset_meta_object_key(run_id, plane, "mask.npy")
+
+    assert overlay_key != mask_key
+    assert overlay_key in backing
+    assert mask_key in backing
+
+
 def test_asset_registry_gcs_rehydration_returns_404_when_object_missing_from_bucket(monkeypatch, tmp_path) -> None:
     backing: dict[str, bytes] = {}
     run_id = "run-fresh-gcs-missing-005"

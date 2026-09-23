@@ -282,19 +282,56 @@ def asset_index_path(run_id: str, plane: str) -> Path:
     return path
 
 
-def asset_index_object_key(run_id: str, plane: str) -> str:
+def asset_meta_object_key(run_id: str, plane: str, asset_name: str) -> str:
+    """Key for one asset's durable metadata (objectKey/sha256/size/...).
+
+    Deliberately one immutable object per asset rather than one shared,
+    repeatedly-overwritten index per run/plane: the AI runtime service
+    account only has storage.objectCreator (create) + objectViewer
+    (get/list) on the durable bucket, not update/delete, so any object that
+    would need overwriting would 403. Each (run_id, plane, asset_name)
+    combination is written exactly once in normal operation, which fits
+    create-only permissions.
+    """
     normalized_run_id = validate_run_id(run_id)
     normalized_plane = validate_plane(plane)
-    return f"runs/{normalized_run_id}/{normalized_plane}/_index.json"
+    normalized_asset = validate_asset_name(asset_name)
+    return f"runs/{normalized_run_id}/{normalized_plane}/_meta/{normalized_asset}.json"
 
 
-def persist_asset_index(record: AssetRecord) -> None:
-    path = asset_index_path(record.run_id, record.plane)
-    existing = _read_index_payload(record.run_id, record.plane) or {}
+def _read_local_index_payload(path: Path) -> dict | None:
+    try:
+        raw = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return None
+    return raw if isinstance(raw, dict) else None
+
+
+def _merge_entry_into_local_index(path: Path, run_id: str, plane: str, entry: dict) -> None:
+    existing = _read_local_index_payload(path) or {
+        "schemaVersion": "pfi.ai.asset-registry.v1",
+        "runId": run_id,
+        "plane": plane,
+        "assets": {},
+    }
     assets = existing.get("assets")
     if not isinstance(assets, dict):
         assets = {}
-    assets[record.asset_name] = {
+    asset_name = entry.get("assetName")
+    if isinstance(asset_name, str):
+        assets[asset_name] = entry
+    existing["assets"] = assets
+    try:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        temporary = path.with_suffix(".json.tmp")
+        temporary.write_text(json.dumps(existing, sort_keys=True), encoding="utf-8")
+        temporary.replace(path)
+    except OSError:
+        pass
+
+
+def persist_asset_index(record: AssetRecord) -> None:
+    entry = {
         "runId": record.run_id,
         "plane": record.plane,
         "assetName": record.asset_name,
@@ -305,89 +342,62 @@ def persist_asset_index(record: AssetRecord) -> None:
         "storageProvider": record.storage_provider,
         "createdAt": datetime.now(timezone.utc).isoformat(),
     }
-    payload = {
-        "schemaVersion": "pfi.ai.asset-registry.v1",
-        "runId": record.run_id,
-        "plane": record.plane,
-        "assets": assets,
-    }
-    payload_text = json.dumps(payload, sort_keys=True)
-    try:
-        path.parent.mkdir(parents=True, exist_ok=True)
-        temporary = path.with_suffix(".json.tmp")
-        temporary.write_text(payload_text, encoding="utf-8")
-        temporary.replace(path)
-    except OSError as exc:
-        raise AssetRegistryError("no se pudo persistir indice de asset", status_code=500) from exc
+    path = asset_index_path(record.run_id, record.plane)
+    _merge_entry_into_local_index(path, record.run_id, record.plane, entry)
+    if not path.exists():
+        raise AssetRegistryError("no se pudo persistir indice de asset", status_code=500)
 
     # El indice local vive en almacenamiento efimero del contenedor (PFI_OUTPUT_DIR),
-    # aunque los blobs de assets ya sean durables via GCS: sin esta copia adicional,
-    # un proceso nuevo no tiene forma de redescubrir el object_key/checksum de un
-    # asset ya escrito, aunque el blob siga existiendo. Se sube la misma copia al
-    # proveedor durable para que un proceso fresco pueda reconstruir el indice local.
+    # aunque el blob del asset ya sea durable via GCS: sin esta copia adicional, un
+    # proceso nuevo no tiene forma de redescubrir el object_key/checksum de un asset
+    # ya escrito, aunque el blob siga existiendo. Se sube la metadata de ESTE asset a
+    # su propia clave inmutable (nunca se reescribe la misma clave dos veces) para
+    # que un proceso fresco pueda reconstruirla sin requerir permiso de sobrescritura.
     if record.storage_provider == "gcs":
         try:
             storage = get_object_storage()
         except ObjectStorageError as exc:
             raise AssetRegistryError(exc.message, status_code=500) from exc
-        index_key = asset_index_object_key(record.run_id, record.plane)
+        meta_key = asset_meta_object_key(record.run_id, record.plane, record.asset_name)
         try:
-            storage.put_bytes(payload_text.encode("utf-8"), index_key, "application/json")
+            storage.put_bytes(
+                json.dumps(entry, sort_keys=True).encode("utf-8"), meta_key, "application/json"
+            )
         except ObjectStorageError as exc:
             raise AssetRegistryError(
-                f"no se pudo persistir indice de asset en almacenamiento durable: {exc.message}",
+                f"no se pudo persistir metadata de asset en almacenamiento durable: {exc.message}",
                 status_code=500,
             ) from exc
 
 
-def _read_index_payload(run_id: str, plane: str) -> dict | None:
-    path = asset_index_path(run_id, plane)
-    try:
-        raw = json.loads(path.read_text(encoding="utf-8"))
-        if isinstance(raw, dict):
-            return raw
-        return None
-    except (OSError, ValueError):
-        pass
-
-    # Cache local vacio (ej. proceso nuevo tras restart/scale-to-zero): intentar
-    # reconstruir el indice desde la copia durable en GCS antes de asumir que el
-    # run no existe.
-    try:
-        storage = get_object_storage()
-    except ObjectStorageError:
-        return None
-    if storage.provider != "gcs":
-        return None
-    index_key = asset_index_object_key(run_id, plane)
-    materialized = storage.local_path(index_key)
-    if materialized is None:
-        return None
-    try:
-        materialized_text = materialized.read_text(encoding="utf-8")
-        raw = json.loads(materialized_text)
-    except (OSError, ValueError):
-        return None
-    if not isinstance(raw, dict):
-        return None
-    try:
-        path.parent.mkdir(parents=True, exist_ok=True)
-        temporary = path.with_suffix(".json.tmp")
-        temporary.write_text(materialized_text, encoding="utf-8")
-        temporary.replace(path)
-    except OSError:
-        pass
-    return raw
-
-
 def load_asset_index_record(run_id: str, plane: str, asset_name: str) -> AssetRecord | None:
-    raw = _read_index_payload(run_id, plane)
-    if raw is None:
-        return None
+    path = asset_index_path(run_id, plane)
+    raw = _read_local_index_payload(path)
     assets = raw.get("assets") if isinstance(raw, dict) else None
     item = assets.get(asset_name) if isinstance(assets, dict) else None
+
     if not isinstance(item, dict):
-        return None
+        # Cache local vacio o asset ausente de el (ej. proceso nuevo tras
+        # restart/scale-to-zero): intentar reconstruir SOLO la metadata de
+        # este asset desde su copia durable individual en GCS.
+        try:
+            storage = get_object_storage()
+        except ObjectStorageError as exc:
+            raise AssetRegistryError(exc.message, status_code=500) from exc
+        if storage.provider != "gcs":
+            return None
+        meta_key = asset_meta_object_key(run_id, plane, asset_name)
+        materialized = storage.local_path(meta_key)
+        if materialized is None:
+            return None
+        try:
+            item = json.loads(materialized.read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            return None
+        if not isinstance(item, dict):
+            return None
+        _merge_entry_into_local_index(path, run_id, plane, item)
+
     object_key = item.get("objectKey")
     if not isinstance(object_key, str) or not object_key.strip():
         return None
@@ -423,17 +433,37 @@ def _sha256_file(path: Path) -> str:
 
 
 def rehydrate_assets_for_run(run_id: str, plane: str) -> None:
-    raw = _read_index_payload(run_id, plane)
-    if raw is None:
-        return
-    assets = raw.get("assets") if isinstance(raw, dict) else None
-    if not isinstance(assets, dict):
-        return
-    for name in assets:
-        if not isinstance(name, str):
-            continue
+    normalized_run_id = validate_run_id(run_id)
+    normalized_plane = validate_plane(plane)
+    path = asset_index_path(normalized_run_id, normalized_plane)
+    raw = _read_local_index_payload(path)
+    asset_names: set[str] = set()
+    if raw is not None:
+        assets = raw.get("assets")
+        if isinstance(assets, dict):
+            asset_names.update(name for name in assets if isinstance(name, str))
+
+    try:
+        storage = get_object_storage()
+    except ObjectStorageError:
+        storage = None
+    if storage is not None and storage.provider == "gcs":
+        # Proceso nuevo sin indice local: listar las claves de metadata
+        # individuales de cada asset (list requiere solo objectViewer, ya
+        # concedido) en vez de depender de un indice combinado.
+        prefix = f"runs/{normalized_run_id}/{normalized_plane}/_meta/"
         try:
-            record = load_asset_index_record(run_id, plane, name)
+            remote_keys = storage.list_keys(prefix)
+        except ObjectStorageError:
+            remote_keys = []
+        for key in remote_keys:
+            suffix = key[len(prefix):] if key.startswith(prefix) else ""
+            if suffix.endswith(".json"):
+                asset_names.add(suffix[: -len(".json")])
+
+    for name in asset_names:
+        try:
+            record = load_asset_index_record(normalized_run_id, normalized_plane, name)
         except AssetRegistryError:
             continue
         if record is not None:
