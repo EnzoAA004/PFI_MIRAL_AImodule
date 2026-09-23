@@ -3,6 +3,8 @@ from __future__ import annotations
 import hashlib
 import os
 import shutil
+import tempfile
+import uuid
 from dataclasses import dataclass
 from pathlib import Path
 from typing import BinaryIO, Literal
@@ -110,7 +112,7 @@ class FilesystemObjectStorage(ObjectStorage):
 class GoogleCloudStorageObjectStorage(ObjectStorage):
     provider: StorageProviderName = "gcs"
 
-    def __init__(self, bucket_name: str) -> None:
+    def __init__(self, bucket_name: str, cache_root: Path | None = None) -> None:
         if not bucket_name.strip():
             raise ObjectStorageError("PFI_STORAGE_GCS_BUCKET is required when provider=gcs")
         try:
@@ -122,6 +124,8 @@ class GoogleCloudStorageObjectStorage(ObjectStorage):
         self.bucket_name = bucket_name.strip()
         self.client = storage.Client()
         self.bucket = self.client.bucket(self.bucket_name)
+        self.cache_root = (cache_root or _default_gcs_cache_root()).resolve()
+        self.cache_root.mkdir(parents=True, exist_ok=True)
 
     def put_file(self, source: Path, object_key: str, content_type: str) -> StoredObject:
         validated = validate_object_key(object_key)
@@ -154,13 +158,58 @@ class GoogleCloudStorageObjectStorage(ObjectStorage):
         )
 
     def open(self, object_key: str) -> BinaryIO:
-        raise ObjectStorageError("gcs objects must be materialized before local serving")
+        materialized = self.materialize(object_key)
+        if materialized is None:
+            raise ObjectStorageError(f"gcs object not found: {object_key}")
+        return materialized.open("rb")
 
     def exists(self, object_key: str) -> bool:
         return self.bucket.blob(validate_object_key(object_key)).exists()
 
     def delete(self, object_key: str) -> None:
         self.bucket.blob(validate_object_key(object_key)).delete()
+        cache_path = self._cache_path_for_key(validate_object_key(object_key))
+        cache_path.unlink(missing_ok=True)
+
+    def local_path(self, object_key: str) -> Path | None:
+        return self.materialize(object_key)
+
+    def materialize(self, object_key: str) -> Path | None:
+        validated = validate_object_key(object_key)
+        cache_path = self._cache_path_for_key(validated)
+        if cache_path.is_file():
+            return cache_path
+        blob = self.bucket.blob(validated)
+        if not blob.exists():
+            return None
+        blob.reload()
+        expected_size = blob.size
+        cache_path.parent.mkdir(parents=True, exist_ok=True)
+        temporary = cache_path.with_name(f".{cache_path.name}.tmp-{uuid.uuid4().hex}")
+        try:
+            blob.download_to_filename(str(temporary))
+            actual_size = temporary.stat().st_size
+            if expected_size is not None and actual_size != int(expected_size):
+                raise ObjectStorageError(
+                    f"materialized object size mismatch for {validated}: "
+                    f"expected {expected_size}, got {actual_size}"
+                )
+            temporary.replace(cache_path)
+        except ObjectStorageError:
+            temporary.unlink(missing_ok=True)
+            raise
+        except Exception as exc:
+            temporary.unlink(missing_ok=True)
+            raise ObjectStorageError(
+                f"failed to materialize gcs object {validated}: {exc}"
+            ) from exc
+        return cache_path
+
+    def _cache_path_for_key(self, object_key: str) -> Path:
+        path = (self.cache_root / object_key).resolve()
+        if not path.is_relative_to(self.cache_root):
+            raise ObjectStorageError("object key escapes cache root")
+        return path
 
 
 def get_object_storage() -> ObjectStorage:
@@ -189,6 +238,13 @@ def _default_local_root() -> Path:
     from .settings import get_settings
 
     return get_settings().output_dir / "object_storage"
+
+
+def _default_gcs_cache_root() -> Path:
+    override = os.getenv("PFI_STORAGE_GCS_CACHE_ROOT", "").strip()
+    if override:
+        return Path(override)
+    return Path(tempfile.gettempdir()) / "pfi-ai-gcs-cache"
 
 
 def _sha256_file(path: Path) -> str:

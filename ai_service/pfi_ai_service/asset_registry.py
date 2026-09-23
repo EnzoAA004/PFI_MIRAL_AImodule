@@ -282,15 +282,15 @@ def asset_index_path(run_id: str, plane: str) -> Path:
     return path
 
 
+def asset_index_object_key(run_id: str, plane: str) -> str:
+    normalized_run_id = validate_run_id(run_id)
+    normalized_plane = validate_plane(plane)
+    return f"runs/{normalized_run_id}/{normalized_plane}/_index.json"
+
+
 def persist_asset_index(record: AssetRecord) -> None:
     path = asset_index_path(record.run_id, record.plane)
-    existing: dict[str, object] = {}
-    try:
-        existing_raw = json.loads(path.read_text(encoding="utf-8"))
-        if isinstance(existing_raw, dict):
-            existing = existing_raw
-    except (OSError, ValueError):
-        existing = {}
+    existing = _read_index_payload(record.run_id, record.plane) or {}
     assets = existing.get("assets")
     if not isinstance(assets, dict):
         assets = {}
@@ -311,20 +311,78 @@ def persist_asset_index(record: AssetRecord) -> None:
         "plane": record.plane,
         "assets": assets,
     }
+    payload_text = json.dumps(payload, sort_keys=True)
     try:
         path.parent.mkdir(parents=True, exist_ok=True)
         temporary = path.with_suffix(".json.tmp")
-        temporary.write_text(json.dumps(payload, sort_keys=True), encoding="utf-8")
+        temporary.write_text(payload_text, encoding="utf-8")
         temporary.replace(path)
     except OSError as exc:
         raise AssetRegistryError("no se pudo persistir indice de asset", status_code=500) from exc
 
+    # El indice local vive en almacenamiento efimero del contenedor (PFI_OUTPUT_DIR),
+    # aunque los blobs de assets ya sean durables via GCS: sin esta copia adicional,
+    # un proceso nuevo no tiene forma de redescubrir el object_key/checksum de un
+    # asset ya escrito, aunque el blob siga existiendo. Se sube la misma copia al
+    # proveedor durable para que un proceso fresco pueda reconstruir el indice local.
+    if record.storage_provider == "gcs":
+        try:
+            storage = get_object_storage()
+        except ObjectStorageError as exc:
+            raise AssetRegistryError(exc.message, status_code=500) from exc
+        index_key = asset_index_object_key(record.run_id, record.plane)
+        try:
+            storage.put_bytes(payload_text.encode("utf-8"), index_key, "application/json")
+        except ObjectStorageError as exc:
+            raise AssetRegistryError(
+                f"no se pudo persistir indice de asset en almacenamiento durable: {exc.message}",
+                status_code=500,
+            ) from exc
 
-def load_asset_index_record(run_id: str, plane: str, asset_name: str) -> AssetRecord | None:
+
+def _read_index_payload(run_id: str, plane: str) -> dict | None:
     path = asset_index_path(run_id, plane)
     try:
         raw = json.loads(path.read_text(encoding="utf-8"))
+        if isinstance(raw, dict):
+            return raw
+        return None
     except (OSError, ValueError):
+        pass
+
+    # Cache local vacio (ej. proceso nuevo tras restart/scale-to-zero): intentar
+    # reconstruir el indice desde la copia durable en GCS antes de asumir que el
+    # run no existe.
+    try:
+        storage = get_object_storage()
+    except ObjectStorageError:
+        return None
+    if storage.provider != "gcs":
+        return None
+    index_key = asset_index_object_key(run_id, plane)
+    materialized = storage.local_path(index_key)
+    if materialized is None:
+        return None
+    try:
+        materialized_text = materialized.read_text(encoding="utf-8")
+        raw = json.loads(materialized_text)
+    except (OSError, ValueError):
+        return None
+    if not isinstance(raw, dict):
+        return None
+    try:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        temporary = path.with_suffix(".json.tmp")
+        temporary.write_text(materialized_text, encoding="utf-8")
+        temporary.replace(path)
+    except OSError:
+        pass
+    return raw
+
+
+def load_asset_index_record(run_id: str, plane: str, asset_name: str) -> AssetRecord | None:
+    raw = _read_index_payload(run_id, plane)
+    if raw is None:
         return None
     assets = raw.get("assets") if isinstance(raw, dict) else None
     item = assets.get(asset_name) if isinstance(assets, dict) else None
@@ -365,10 +423,8 @@ def _sha256_file(path: Path) -> str:
 
 
 def rehydrate_assets_for_run(run_id: str, plane: str) -> None:
-    path = asset_index_path(run_id, plane)
-    try:
-        raw = json.loads(path.read_text(encoding="utf-8"))
-    except (OSError, ValueError):
+    raw = _read_index_payload(run_id, plane)
+    if raw is None:
         return
     assets = raw.get("assets") if isinstance(raw, dict) else None
     if not isinstance(assets, dict):
