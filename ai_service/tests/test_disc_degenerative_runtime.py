@@ -97,3 +97,50 @@ def test_endpoint_rejects_productive_request_until_preprocessing_parity_is_valid
     )
     assert response.status_code == 422
     assert response.json()["code"] == "DISC_DEGENERATIVE_PREPROCESSING_NOT_AVAILABLE"
+
+
+def test_findings_publish_the_evaluated_region_of_each_available_series() -> None:
+    """T1 y T2 se localizan por separado: cada rol lleva su corte y su region.
+
+    Publicarlas juntas obligaria a elegir una, y el revisor terminaria mirando el
+    corte de la otra secuencia creyendo que es el que se clasifico.
+    """
+    t1_region = {
+        "inputId": "inp-t1",
+        "sliceIndex": 11,
+        "pointYx": [120.0, 96.0],
+        "bboxYx": [108, 132, 84, 108],
+        "coordinateSpaceHeight": 256,
+        "coordinateSpaceWidth": 200,
+    }
+    sample = PreparedDiscLevel(
+        level="L4-L5",
+        t1=crop(),
+        t2=None,
+        t1_positions=(10, 11, 12),
+        t1_region=t1_region,
+        localization_source="segmentation_derived_disc_level",
+    )
+
+    envelope = classifier_with_fake_model().predict_preprocessed([sample])
+    sources = {
+        item["role"]: item
+        for item in envelope["discDegenerativeFindings"]["findings"][0]["sourceSeries"]
+    }
+
+    assert sources["sagittal_t1"]["positions"] == [10, 11, 12]
+    assert sources["sagittal_t1"]["sliceIndex"] == 11
+    assert sources["sagittal_t1"]["pointYx"] == [120.0, 96.0]
+    # La modalidad que no entro no inventa geometria.
+    assert sources["sagittal_t2"]["available"] is False
+    assert "pointYx" not in sources["sagittal_t2"]
+
+
+def test_findings_omit_the_region_when_the_roi_did_not_come_from_segmentation() -> None:
+    sample = PreparedDiscLevel(level="L4-L5", t1=crop(), t2=None, t1_positions=(10, 11, 12))
+
+    envelope = classifier_with_fake_model().predict_preprocessed([sample])
+    source = envelope["discDegenerativeFindings"]["findings"][0]["sourceSeries"][0]
+
+    assert source["positions"] == [10, 11, 12]
+    assert "pointYx" not in source and "bboxYx" not in source

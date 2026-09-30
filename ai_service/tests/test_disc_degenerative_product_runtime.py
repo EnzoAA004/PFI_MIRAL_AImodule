@@ -118,3 +118,64 @@ def test_product_runtime_status_endpoint() -> None:
     assert body["preprocessingParityValidated"] is True
     assert body["automaticDiscLocalizationValidated"] is False
     assert body["notClinicalDiagnosis"] is True
+
+
+def test_evaluated_region_points_at_the_disc_and_not_at_the_context_margin() -> None:
+    """El punto que se dibuja tiene que caer en el disco, no en el centro del recorte.
+
+    El recorte lleva un margen de contexto grande (`MARGIN_RATIO`), y contra el borde
+    de la imagen ese margen se recorta de un solo lado: su centro se corre. Un disco
+    pegado al borde superior es justo el caso donde una marca mal derivada aparece
+    sobre la vertebra de al lado.
+    """
+    volume = np.arange(9 * 120 * 80, dtype=np.float32).reshape(9, 120, 80)
+    localization = SegmentationDerivedDiscLocalization(
+        source="segmentation_derived_disc_level",
+        sliceIndex=4,
+        bboxYx=(0, 12, 30, 50),
+        coordinateSpaceWidth=80,
+        coordinateSpaceHeight=120,
+    )
+
+    result = crop_2p5d_from_segmentation_roi(volume, localization)
+
+    assert result.discBboxYx == (0, 12, 30, 50)
+    assert result.pointYx == (6.0, 40.0)
+    assert result.coordinateSpaceYx == (120, 80)
+    # El recorte real si arrastra el margen; el punto no lo sigue.
+    assert result.nativeBboxYx != result.discBboxYx
+    y0, y1, x0, x1 = result.discBboxYx
+    assert y0 <= result.pointYx[0] <= y1 and x0 <= result.pointYx[1] <= x1
+
+
+def test_evaluated_region_is_published_per_role_in_native_pixels() -> None:
+    from pfi_ai_service.disc_degenerative_product_runtime import (
+        ProductDiscSourceSeries,
+        evaluated_region,
+    )
+
+    volume = np.arange(7 * 100 * 200, dtype=np.float32).reshape(7, 100, 200)
+    series = ProductDiscSourceSeries(
+        role="sagittal_t2",
+        inputId="inp-1",
+        available=True,
+        localization=SegmentationDerivedDiscLocalization(
+            source="segmentation_derived_disc_level",
+            sliceIndex=3,
+            bboxYx=(64, 128, 32, 96),
+            coordinateSpaceWidth=256,
+            coordinateSpaceHeight=256,
+        ),
+    )
+    crop = crop_2p5d_from_segmentation_roi(volume, series.localization)
+
+    region = evaluated_region(series, crop)
+
+    assert region["inputId"] == "inp-1"
+    assert region["sliceIndex"] == 3
+    assert region["coordinateSpaceHeight"] == 100
+    assert region["coordinateSpaceWidth"] == 200
+    # La caja llego en base 256 y se publica ya escalada al pixel nativo: la mitad
+    # de las filas y tres cuartos menos de las columnas.
+    assert region["bboxYx"] == [25, 50, 25, 75]
+    assert region["pointYx"] == [37.5, 50.0]
