@@ -85,3 +85,68 @@ def test_level_mapping_is_derived_from_spider_ivd_label_order() -> None:
     assert level_to_ivd_mapping("L5-S1").raw_disc_label == 205
     with pytest.raises(ValueError):
         level_to_ivd_mapping("T12-L1")
+
+
+def region() -> dict:
+    return {
+        "inputId": "inp-t1",
+        "sliceIndex": 11,
+        "pointYx": [120.0, 96.0],
+        "bboxYx": [108, 132, 84, 108],
+        "coordinateSpaceHeight": 256,
+        "coordinateSpaceWidth": 200,
+    }
+
+
+def envelope_with_region(**overrides) -> dict:
+    payload = valid_envelope()
+    series = payload["discDegenerativeFindings"]["findings"][0]["sourceSeries"][0]
+    series.update(region())
+    series.update(overrides)
+    return payload
+
+
+def test_contract_accepts_the_evaluated_region_of_an_available_series() -> None:
+    validate_disc_degenerative_findings_envelope(envelope_with_region())
+
+
+def test_contract_still_accepts_a_finding_without_any_region() -> None:
+    """Una ROI externa no publica geometria: ausente no es invalido."""
+    validate_disc_degenerative_findings_envelope(valid_envelope())
+
+
+@pytest.mark.parametrize(
+    "overrides",
+    [
+        # Media geometria no se puede dibujar: sin espacio de coordenadas el punto
+        # no se puede escalar a la imagen que ve el revisor.
+        {"coordinateSpaceWidth": None},
+        # El centro tiene que ser uno de los cortes que el modelo miro; si no, la
+        # geometria y la prediccion vienen de dos preparaciones distintas.
+        {"sliceIndex": 40},
+        {"bboxYx": [108, 132, 84, 900]},
+        {"bboxYx": [132, 108, 84, 108]},
+        {"pointYx": [10.0, 96.0]},
+        {"pointYx": [120.0, 400.0]},
+        {"pointYx": [120.0]},
+        {"inputId": "   "},
+    ],
+)
+def test_contract_rejects_a_region_that_could_not_be_drawn(overrides) -> None:
+    payload = envelope_with_region()
+    series = payload["discDegenerativeFindings"]["findings"][0]["sourceSeries"][0]
+    for key, value in overrides.items():
+        if value is None:
+            series.pop(key)
+        else:
+            series[key] = value
+    with pytest.raises(DiscDegenerativeFindingsContractError):
+        validate_disc_degenerative_findings_envelope(payload)
+
+
+def test_contract_rejects_a_region_on_a_modality_that_was_not_analysed() -> None:
+    payload = valid_envelope()
+    unavailable = payload["discDegenerativeFindings"]["findings"][0]["sourceSeries"][1]
+    unavailable.update(region())
+    with pytest.raises(DiscDegenerativeFindingsContractError):
+        validate_disc_degenerative_findings_envelope(payload)

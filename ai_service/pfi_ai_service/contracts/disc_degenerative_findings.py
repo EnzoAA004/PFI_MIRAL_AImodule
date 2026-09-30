@@ -257,11 +257,82 @@ def _validate_source_series(value: Any, path: str, errors: list[str]) -> None:
         if positions is not None:
             if not isinstance(positions, list) or any(isinstance(pos, bool) or not isinstance(pos, int) or pos < 0 for pos in positions):
                 errors.append(f"{item_path}.positions must contain non-negative integers")
+        _validate_evaluated_region(item, item_path, errors)
     available = [item for item in value if isinstance(item, Mapping) and item.get("available") is True]
     if not available:
         errors.append(f"{path} must include at least one available modality")
     if not seen_roles.issubset(set(SERIES_ROLES)):
         errors.append(f"{path} has unsupported roles")
+
+
+EVALUATED_REGION_KEYS = ("inputId", "sliceIndex", "pointYx", "bboxYx", "coordinateSpaceHeight", "coordinateSpaceWidth")
+
+
+def _validate_evaluated_region(item: Mapping[str, Any], path: str, errors: list[str]) -> None:
+    """La region evaluada, cuando la serie la publica.
+
+    Es opcional --una ROI externa no la tiene-- pero es todo o nada: un punto sin su
+    espacio de coordenadas no se puede escalar a la imagen que ve el revisor, y
+    dibujarlo igual lo pondria en cualquier lado del corte.
+
+    `sliceIndex` tiene que ser uno de los cortes que el modelo miro. Un centro fuera
+    de su propia ventana significa que la geometria y la prediccion vienen de dos
+    preparaciones distintas, que es exactamente el error que haria que la marca
+    senale un nivel que no es el del hallazgo.
+    """
+    present = [key for key in EVALUATED_REGION_KEYS if key in item]
+    if not present:
+        return
+    if len(present) != len(EVALUATED_REGION_KEYS):
+        missing = [key for key in EVALUATED_REGION_KEYS if key not in item]
+        errors.append(f"{path} evaluated region is partial, missing {', '.join(missing)}")
+        return
+    if item.get("available") is not True:
+        errors.append(f"{path} declares an evaluated region on an unavailable modality")
+    if not _non_empty_string(item.get("inputId")):
+        errors.append(f"{path}.inputId must be a non-empty opaque string")
+
+    rows = item.get("coordinateSpaceHeight")
+    columns = item.get("coordinateSpaceWidth")
+    if not _positive_int(rows) or not _positive_int(columns):
+        errors.append(f"{path}.coordinateSpace must be positive integers")
+        return
+
+    slice_index = item.get("sliceIndex")
+    if isinstance(slice_index, bool) or not isinstance(slice_index, int) or slice_index < 0:
+        errors.append(f"{path}.sliceIndex must be a non-negative integer")
+    else:
+        positions = item.get("positions")
+        if isinstance(positions, list) and positions and slice_index not in positions:
+            errors.append(f"{path}.sliceIndex must be one of the analysed positions")
+
+    bbox = item.get("bboxYx")
+    if not isinstance(bbox, list) or len(bbox) != 4 or not all(_finite_number(value) for value in bbox):
+        errors.append(f"{path}.bboxYx must be [y0, y1, x0, x1]")
+        return
+    y0, y1, x0, x1 = (float(value) for value in bbox)
+    if y1 <= y0 or x1 <= x0:
+        errors.append(f"{path}.bboxYx must be a non-empty box")
+    if y0 < 0 or x0 < 0 or y1 > float(rows) or x1 > float(columns):
+        errors.append(f"{path}.bboxYx falls outside its coordinate space")
+
+    point = item.get("pointYx")
+    if not isinstance(point, list) or len(point) != 2 or not all(_finite_number(value) for value in point):
+        errors.append(f"{path}.pointYx must be [y, x]")
+        return
+    point_y, point_x = (float(value) for value in point)
+    if not (0.0 <= point_y <= float(rows)) or not (0.0 <= point_x <= float(columns)):
+        errors.append(f"{path}.pointYx falls outside its coordinate space")
+    elif not (y0 <= point_y <= y1) or not (x0 <= point_x <= x1):
+        errors.append(f"{path}.pointYx falls outside its own bounding box")
+
+
+def _positive_int(value: Any) -> bool:
+    return not isinstance(value, bool) and isinstance(value, int) and value > 0
+
+
+def _finite_number(value: Any) -> bool:
+    return not isinstance(value, bool) and isinstance(value, (int, float)) and isfinite(float(value))
 
 
 def _validate_sha(value: Any, path: str, errors: list[str]) -> None:
