@@ -105,6 +105,13 @@ class PreparedCrop(BaseModel):
     crop: Any
     positions: tuple[int, int, int]
     nativeBboxYx: tuple[int, int, int, int]
+    """Recuadro efectivamente recortado: el disco mas el margen de contexto."""
+    discBboxYx: tuple[int, int, int, int]
+    """Recuadro del disco sin margen. Es lo unico que la segmentacion afirma."""
+    pointYx: tuple[float, float]
+    """Centro del recuadro del disco, en pixeles nativos de la serie."""
+    coordinateSpaceYx: tuple[int, int]
+    """Filas y columnas del volumen nativo: sin esto el punto no se puede escalar."""
 
 
 def normalize_volume_notebook66(array: np.ndarray) -> np.ndarray:
@@ -156,7 +163,8 @@ def crop_2p5d_from_segmentation_roi(
     if center_z >= image.shape[0]:
         raise DiscDegenerativeInvalidRequest("localization_slice_out_of_range")
 
-    y0, y1, x0, x1 = _native_bbox(localization, image.shape[1], image.shape[2])
+    disc_y0, disc_y1, disc_x0, disc_x1 = _native_bbox(localization, image.shape[1], image.shape[2])
+    y0, y1, x0, x1 = disc_y0, disc_y1, disc_x0, disc_x1
     height, width = y1 - y0, x1 - x0
     margin_y = max(8, int(round(height * margin_ratio)))
     margin_x = max(8, int(round(width * margin_ratio)))
@@ -181,6 +189,14 @@ def crop_2p5d_from_segmentation_roi(
         crop=resized,
         positions=z_indices,
         nativeBboxYx=(y0, y1, x0, x1),
+        discBboxYx=(disc_y0, disc_y1, disc_x0, disc_x1),
+        # El centro del recuadro sin margen, no el del recorte: el recorte lleva
+        # contexto alrededor a proposito, y su centro se corre hacia donde el margen
+        # se recorto contra el borde de la imagen. En un disco lumbar --una lente
+        # aplanada-- el centro del recuadro cae dentro de la mascara, asi que no hace
+        # falta arrastrar el centroide de la componente por toda la cadena.
+        pointYx=((disc_y0 + disc_y1) / 2.0, (disc_x0 + disc_x1) / 2.0),
+        coordinateSpaceYx=(int(image.shape[1]), int(image.shape[2])),
     )
 
 
@@ -207,6 +223,29 @@ def _prepare_source(series: ProductDiscSourceSeries) -> PreparedCrop:
     return crop_2p5d_from_segmentation_roi(loaded.array, series.localization)
 
 
+def evaluated_region(series: ProductDiscSourceSeries, crop: PreparedCrop) -> dict[str, Any]:
+    """Donde se evaluo este nivel en esta serie, en pixeles nativos.
+
+    Es la ROI que entro al modelo, no la extension de un hallazgo: el clasificador
+    no segmenta lesion, y la ventana 2.5D sale de la mascara del disco. Se publica
+    para que el revisor pueda ir al corte y ver sobre que se clasifico, que es lo
+    unico que el dato sostiene.
+    """
+    rows, columns = crop.coordinateSpaceYx
+    return {
+        # Sin el identificador de la serie el corte no alcanza: T1 y T2 tienen su
+        # propio stack, y llevar el visor al corte 8 de la serie equivocada es peor
+        # que no moverlo. Es el mismo id opaco de carga que ya usa el visor, no un
+        # identificador DICOM.
+        "inputId": series.inputId,
+        "sliceIndex": int(series.localization.sliceIndex),
+        "pointYx": [round(float(crop.pointYx[0]), 2), round(float(crop.pointYx[1]), 2)],
+        "bboxYx": [int(value) for value in crop.discBboxYx],
+        "coordinateSpaceHeight": int(rows),
+        "coordinateSpaceWidth": int(columns),
+    }
+
+
 def prepare_product_request(request: ProductDiscMultitaskPredictRequest) -> list[PreparedDiscLevel]:
     prepared: list[PreparedDiscLevel] = []
     for item in request.levels:
@@ -214,6 +253,8 @@ def prepare_product_request(request: ProductDiscMultitaskPredictRequest) -> list
         t2: np.ndarray | None = None
         t1_positions: tuple[int, ...] = ()
         t2_positions: tuple[int, ...] = ()
+        t1_region: dict[str, Any] | None = None
+        t2_region: dict[str, Any] | None = None
 
         for series in item.sourceSeries:
             if not series.available:
@@ -222,9 +263,11 @@ def prepare_product_request(request: ProductDiscMultitaskPredictRequest) -> list
             if series.role == "sagittal_t1":
                 t1 = np.asarray(result.crop, dtype=np.float32)
                 t1_positions = tuple(result.positions)
+                t1_region = evaluated_region(series, result)
             elif series.role == "sagittal_t2":
                 t2 = np.asarray(result.crop, dtype=np.float32)
                 t2_positions = tuple(result.positions)
+                t2_region = evaluated_region(series, result)
 
         if t1 is None and t2 is None:
             raise DiscDegenerativeInvalidRequest("at_least_one_modality_required")
@@ -236,6 +279,10 @@ def prepare_product_request(request: ProductDiscMultitaskPredictRequest) -> list
                 t2=t2,
                 t1_positions=t1_positions,
                 t2_positions=t2_positions,
+                # Una region por rol: T1 y T2 se localizan por separado y su corte
+                # central no tiene por que coincidir.
+                t1_region=t1_region,
+                t2_region=t2_region,
                 localization_source="segmentation_derived_disc_level",
             )
         )

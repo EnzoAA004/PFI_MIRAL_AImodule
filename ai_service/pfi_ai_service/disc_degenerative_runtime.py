@@ -132,6 +132,10 @@ class PreparedDiscLevel:
     t2: np.ndarray | None
     t1_positions: tuple[int, ...] = ()
     t2_positions: tuple[int, ...] = ()
+    # Region evaluada por rol, cuando la localizacion la derivo la segmentacion.
+    # Una ROI subida por fuera no la trae: ahi no hay geometria que publicar.
+    t1_region: dict[str, Any] | None = None
+    t2_region: dict[str, Any] | None = None
     localization_source: str = "external_disc_roi"
 
 
@@ -344,6 +348,25 @@ def _validate_crop(value: np.ndarray, role: str) -> np.ndarray:
     return np.clip(array, 0.0, 1.0).astype(np.float32)
 
 
+def _source_series_entry(
+    role: str,
+    available: bool,
+    positions: tuple[int, ...],
+    region: dict[str, Any] | None,
+) -> dict[str, Any]:
+    """Que serie entro al modelo, con que cortes y sobre que region.
+
+    `positions` son los tres cortes de la ventana 2.5D: el modelo no vio ningun otro,
+    asi que decir "corte N" a secas afirmaria una busqueda que no ocurrio. La region
+    solo se agrega cuando existe, y se agrega entera: media geometria no se puede
+    dibujar y una marca a medias es peor que ninguna.
+    """
+    entry: dict[str, Any] = {"role": role, "available": available, "positions": list(positions)}
+    if available and region is not None:
+        entry.update(region)
+    return entry
+
+
 def _findings_from_outputs(sample: PreparedDiscLevel, outputs: dict[str, torch.Tensor]) -> list[dict[str, Any]]:
     result: list[dict[str, Any]] = []
     for task in TASK_ORDER:
@@ -366,8 +389,8 @@ def _findings_from_outputs(sample: PreparedDiscLevel, outputs: dict[str, torch.T
                 },
                 "evaluation": {"status": "evaluated"},
                 "sourceSeries": [
-                    {"role": "sagittal_t1", "available": sample.t1 is not None, "positions": list(sample.t1_positions)},
-                    {"role": "sagittal_t2", "available": sample.t2 is not None, "positions": list(sample.t2_positions)},
+                    _source_series_entry("sagittal_t1", sample.t1 is not None, sample.t1_positions, sample.t1_region),
+                    _source_series_entry("sagittal_t2", sample.t2 is not None, sample.t2_positions, sample.t2_region),
                 ],
                 "localization": {
                     "source": sample.localization_source,
