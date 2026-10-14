@@ -274,6 +274,8 @@ async def inputs_register(
     file: UploadFile | None = File(default=None),
     case_id: str | None = Form(default=None, alias="caseId"),
     plane: str | None = Form(default=None),
+    sequence: str | None = Form(default=None),
+    sequence_description: str | None = Form(default=None, alias="sequenceDescription"),
 ):
     content_type = http_request.headers.get("content-type", "")
     if file is not None or content_type.startswith("multipart/form-data"):
@@ -284,6 +286,8 @@ async def inputs_register(
             plane=plane,
             client_filename=file.filename,
             stream=file.file,
+            sequence=sequence,
+            sequence_description=sequence_description,
         ))
     payload = await http_request.json()
     return clean_for_json(register_server_side_input(InputRegistrationRequest.model_validate(payload)))

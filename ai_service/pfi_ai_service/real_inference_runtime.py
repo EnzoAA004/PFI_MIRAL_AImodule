@@ -2129,9 +2129,11 @@ def run_real_inference(request: Any, run_id: str) -> Dict[str, Any]:
         "inputPath": request.input_path,
         "series": [{
             "id": series_id,
-            "name": "Sagittal T2" if request.plane == "sagittal" else "Axial T2",
+            # Antes decia "T2" para todo archivo. La ponderacion no se deduce: la informa
+            # `sequenceInfo` (declarada o detectada) y, sin dato, queda desconocida.
+            "name": "Sagittal" if request.plane == "sagittal" else "Axial",
             "plane": request.plane,
-            "sequence": "T2",
+            "sequence": None,
             "sliceCount": slice_count,
             "selectedSlice": selected_slice,
             "imageUrl": None,

@@ -287,6 +287,7 @@ def register_study_zip(*, case_id: str, stream: Any) -> dict[str, Any]:
                 file_paths=item["files"],
                 analyzable=bool(matched_slots),
                 remap=remap,
+                weighting=item["weighting"],
             )
             summary = {**_summarize(item), "inputId": meta["inputId"]}
             summaries.append(summary)

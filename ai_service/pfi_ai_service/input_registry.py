@@ -61,6 +61,54 @@ class InputRecord:
     # las series registradas antes de que existiera la de-identificacion conservan los
     # datos del paciente, y eso hay que poder distinguirlo, no asumirlo resuelto.
     deidentified: bool = False
+    # Ponderacion de la serie y de donde sale. `unknown` es el valor por defecto y no
+    # bloquea nada: significa que nadie lo informo ni se pudo detectar. `user_declared`
+    # es lo que dijo quien cargo el archivo (no una deteccion ni una validacion del
+    # modelo); `auto_detected` es lo que leyo la ingesta de un estudio DICOM.
+    sequence: str = "unknown"
+    sequence_source: str = "unknown"
+    sequence_description: str = ""
+
+
+SEQUENCE_VALUES = ("unknown", "t1", "t2", "other")
+SEQUENCE_SOURCES = ("unknown", "user_declared", "auto_detected")
+MAX_SEQUENCE_DESCRIPTION_CHARS = 80
+
+
+def normalize_declared_sequence(sequence: str | None, description: str | None) -> tuple[str, str, str]:
+    """Valida lo que declara el usuario y devuelve (valor, procedencia, descripcion).
+
+    Ausente o `unknown` queda desconocida y sin procedencia. `other` exige descripcion
+    (es lo unico que dice que secuencia es); en `t1`/`t2` la descripcion no aplica y se
+    rechaza para no guardar texto libre que parezca decir algo. Nunca se deduce la
+    ponderacion del nombre del archivo ni de la descripcion.
+    """
+    value = (sequence or "").strip().lower() or "unknown"
+    text = (description or "").strip()
+    if value not in SEQUENCE_VALUES:
+        raise InputRegistryError(f"sequence invalida: {value}", status_code=400)
+    if value == "unknown":
+        if text:
+            raise InputRegistryError("sequenceDescription solo aplica a la secuencia «other»", status_code=400)
+        return "unknown", "unknown", ""
+    if value == "other":
+        if not text:
+            raise InputRegistryError("la secuencia «other» requiere sequenceDescription", status_code=400)
+        if len(text) > MAX_SEQUENCE_DESCRIPTION_CHARS or any(ord(char) < 32 for char in text):
+            raise InputRegistryError("sequenceDescription invalida (maximo 80 caracteres, sin saltos de linea)", status_code=400)
+        return "other", "user_declared", text
+    if text:
+        raise InputRegistryError("sequenceDescription solo aplica a la secuencia «other»", status_code=400)
+    return value, "user_declared", ""
+
+
+def sequence_summary(record: "InputRecord") -> dict[str, object]:
+    """Forma publica de la ponderacion de una entrada: valor, procedencia y descripcion."""
+    return {
+        "value": record.sequence,
+        "source": record.sequence_source,
+        "description": record.sequence_description or None,
+    }
 
 
 SERVER_SIDE_SOURCES = {
@@ -111,6 +159,9 @@ def _persist_registry() -> None:
             "sourceKey": record.source_key,
             "analyzable": record.analyzable,
             "deidentified": record.deidentified,
+            "sequence": record.sequence,
+            "sequenceSource": record.sequence_source,
+            "sequenceDescription": record.sequence_description,
         }
         for record in _INPUT_REGISTRY.values()
     ]
@@ -127,6 +178,17 @@ def _persist_registry() -> None:
         # -inputIds que dejan de resolver tras un reinicio- aparece mucho despues y en
         # otro lugar, y sin este rastro no hay como conectarlo con su causa.
         log.exception("event=input_registry_persist_failed path=%s", path)
+
+
+def _stored_sequence(item: dict) -> dict[str, str]:
+    """Ponderacion de un registro persistido. Los anteriores a esta version no la traen: quedan
+    desconocidos (no se asume T2 ni nada). Un valor ilegible tambien cae a desconocido."""
+    value = str(item.get("sequence") or "unknown")
+    source = str(item.get("sequenceSource") or "unknown")
+    description = str(item.get("sequenceDescription") or "")
+    if value not in SEQUENCE_VALUES or source not in SEQUENCE_SOURCES or (value == "unknown") != (source == "unknown"):
+        return {"sequence": "unknown", "sequence_source": "unknown", "sequence_description": ""}
+    return {"sequence": value, "sequence_source": source, "sequence_description": description}
 
 
 def _load_registry() -> None:
@@ -163,6 +225,7 @@ def _load_registry() -> None:
             source_key=str(item.get("sourceKey", "")),
             analyzable=bool(item.get("analyzable", True)),
             deidentified=bool(item.get("deidentified", False)),
+            **_stored_sequence(item),
         ))
 
 
@@ -215,9 +278,13 @@ def register_uploaded_input(
     plane: str,
     client_filename: str | None,
     stream: BinaryIO,
+    sequence: str | None = None,
+    sequence_description: str | None = None,
 ) -> dict[str, object]:
     normalized_plane = validate_plane(plane)
     suffix = validate_suffix(client_filename or "")
+    # Se valida antes de guardar nada: una declaracion invalida no deja un archivo huerfano.
+    declared, declared_source, declared_description = normalize_declared_sequence(sequence, sequence_description)
     input_id = f"inp_{uuid4().hex}"
     if suffix == ".zip":
         destination, size, fmt = store_zip_series(input_id, normalized_plane, stream)
@@ -233,6 +300,9 @@ def register_uploaded_input(
         format=fmt,
         size=size,
         source_key="upload",
+        sequence=declared,
+        sequence_source=declared_source,
+        sequence_description=declared_description,
     )
     remember_input(record)
     return public_input_metadata(record)
@@ -269,6 +339,7 @@ def register_series_files(
     file_paths: list,
     analyzable: bool = True,
     remap: UidRemapper | None = None,
+    weighting: str | None = None,
 ) -> dict[str, object]:
     """Copy a classified series' files into a fresh per-plane input directory and register it.
 
@@ -326,6 +397,10 @@ def register_series_files(
         source_key="study-upload",
         analyzable=analyzable,
         deidentified=True,
+        # Lo que leyo la ingesta (SeriesDescription / tiempo de eco). Es una deteccion
+        # automatica y se distingue de lo declarado por el usuario. Si no pudo, queda desconocida.
+        sequence=weighting if weighting in ("t1", "t2") else "unknown",
+        sequence_source="auto_detected" if weighting in ("t1", "t2") else "unknown",
     )
     remember_input(record)
     return public_input_metadata(record)
@@ -488,6 +563,7 @@ def public_input_metadata(record: InputRecord) -> dict[str, object]:
         "plane": record.plane,
         "format": record.format,
         "size": record.size,
+        "sequence": sequence_summary(record),
     }
 
 

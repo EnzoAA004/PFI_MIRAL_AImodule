@@ -88,6 +88,18 @@ class PlaneModelV2(PublicResponseModel):
     manifestValid: bool
 
 
+class SequenceInfoV2(PublicResponseModel):
+    """Ponderacion de la serie y su procedencia.
+
+    `user_declared` es lo que dijo quien cargo el archivo; `auto_detected` es lo que leyo la
+    ingesta de un estudio DICOM. Ninguna es una validacion del modelo.
+    """
+
+    value: Literal["unknown", "t1", "t2", "other"]
+    source: Literal["unknown", "user_declared", "auto_detected"]
+    description: str | None = None
+
+
 class PlaneInputV2(PublicResponseModel):
     inputId: str
     format: str | None
@@ -101,6 +113,7 @@ class PlaneInputV2(PublicResponseModel):
     sliceCount: int | None
     selectedAxis: int | None
     inPlaneSpacingMm: list[float] | None
+    sequence: SequenceInfoV2 | None = None
 
 
 class CoordinateSpaceV2(PublicResponseModel):
@@ -119,6 +132,7 @@ class PlaneSeriesV2(PublicResponseModel):
     id: str
     plane: PlaneNameV2
     sequence: str | None
+    sequenceInfo: SequenceInfoV2 | None = None
     selectedSliceIndex: int | None
     sliceCount: int | None
     status: str

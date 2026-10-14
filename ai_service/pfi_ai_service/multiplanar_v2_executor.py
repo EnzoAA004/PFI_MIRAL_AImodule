@@ -34,6 +34,7 @@ from .multiplanar_v2_models import (
     PlaneQualityV2,
     PlaneSegmentationV2,
     SegmentationInstanceV2,
+    SequenceInfoV2,
     PlaneRunV2Result,
     PlaneSeriesV2,
     ReviewPolicyV2,
@@ -400,6 +401,7 @@ def normalize_plane_result_v2(
 ) -> PlaneRunV2Result:
     metadata = response.get("metadata") if isinstance(response.get("metadata"), dict) else {}
     model = plane_model_v2(preflight["model"])
+    sequence_info = sequence_info_v2(preflight.get("input"))
     selected_slice = int_or_none(metadata.get("selectedSlice"))
     selected_axis = int_or_none(metadata.get("selectedAxis"))
     native_shape = int_list_or_none(metadata.get("inputShapeNative"))
@@ -452,9 +454,10 @@ def normalize_plane_result_v2(
             sliceCount=int_or_none(metadata.get("sliceCount")),
             selectedAxis=selected_axis,
             inPlaneSpacingMm=float_list_or_none(metadata.get("inPlaneSpacing")),
+            sequence=sequence_info,
         ),
         coordinateSpace=coordinate_space,
-        series=series_v2(plane, response.get("series"), selected_slice, strict=strict),
+        series=series_v2(plane, response.get("series"), selected_slice, strict=strict, sequence_info=sequence_info),
         assets=assets_v2(plane, str(response.get("runId") or response.get("run_id")), metadata),
         masks=masks_v2(plane, response.get("masks"), coordinate_space.name),
         landmarks=landmarks_v2(plane, response.get("landmarks"), coordinate_space.name),
@@ -483,7 +486,36 @@ def plane_model_v2(artifact: dict[str, Any]) -> PlaneModelV2:
     )
 
 
-def series_v2(plane: PlaneNameV2, raw: Any, selected_slice: int | None, *, strict: bool = True) -> list[PlaneSeriesV2]:
+def sequence_info_v2(record: Any) -> SequenceInfoV2:
+    """Ponderacion registrada en la entrada, tal cual: declarada, detectada o desconocida.
+
+    Una entrada sin el dato (registros anteriores, objetos sin el atributo) es desconocida: nunca
+    se completa con T2 ni se deduce del nombre o de la descripcion.
+    """
+    value = getattr(record, "sequence", None)
+    source = getattr(record, "sequence_source", None)
+    if value not in ("t1", "t2", "other") or source not in ("user_declared", "auto_detected"):
+        return SequenceInfoV2(value="unknown", source="unknown", description=None)
+    description = getattr(record, "sequence_description", "") or None
+    return SequenceInfoV2(value=value, source=source, description=description if value == "other" else None)
+
+
+def sequence_label(info: SequenceInfoV2 | None) -> str | None:
+    if info is None or info.value == "unknown":
+        return None
+    if info.value == "other":
+        return info.description
+    return info.value.upper()
+
+
+def series_v2(
+    plane: PlaneNameV2,
+    raw: Any,
+    selected_slice: int | None,
+    *,
+    strict: bool = True,
+    sequence_info: SequenceInfoV2 | None = None,
+) -> list[PlaneSeriesV2]:
     source = raw if isinstance(raw, list) else []
     series: list[PlaneSeriesV2] = []
     for item in source:
@@ -492,7 +524,8 @@ def series_v2(plane: PlaneNameV2, raw: Any, selected_slice: int | None, *, stric
         series.append(PlaneSeriesV2(
             id=required_text(item.get("id"), "series.id", plane),
             plane=plane,
-            sequence=None,
+            sequence=sequence_label(sequence_info),
+            sequenceInfo=sequence_info,
             selectedSliceIndex=int_or_none(item.get("selectedSlice")) if item.get("selectedSlice") is not None else selected_slice,
             sliceCount=int_or_none(item.get("sliceCount")),
             status="served_single_slice" if item.get("status") == "real_baseline_ready" else str(item.get("status") or "served_single_slice"),
@@ -895,6 +928,7 @@ def synthetic_plane_result(
             sliceCount=None,
             selectedAxis=None,
             inPlaneSpacingMm=None,
+            sequence=sequence_info_v2(preflight.get("input")),
         ),
         coordinateSpace=CoordinateSpaceV2(
             name="synthetic_empty_pixel_space",
@@ -1064,6 +1098,7 @@ class LegacyMultiplanarV1Adapter:
                     "id": series.id,
                     "plane": series.plane,
                     "sequence": series.sequence,
+                    "sequenceInfo": series.sequenceInfo.model_dump(mode="json") if series.sequenceInfo else None,
                     "sliceCount": series.sliceCount,
                     "selectedSlice": series.selectedSliceIndex,
                     "status": series.status,
