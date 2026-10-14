@@ -15,6 +15,9 @@
 | `PFI_SAGITTAL_RELEASE_CONTENT_SHA256` | `7420ad4271fe634c970b2a543d1ef8fb1437888c99ca8bd5733a06e5f63e3e7e` | Si para sync GCS sagital | Hash de contenido publicado esperado. |
 | `PFI_SAGITTAL_RELEASE_MANIFEST_SHA256` | `d36d0c4fe183ba9a98f0a3471486be5dee1cf1fa820dc32b3a50177ce322be21` | Si para sync GCS sagital | Hash esperado de `release_manifest.json`. |
 | `PFI_SAGITTAL_MODEL_SHA256` | `cf11dcc0ad77a7c787e64a796a2fd7398ef906add461cef4b3d61f1a5238e944` | Si para sync GCS sagital | Hash esperado del checkpoint runtime. |
+| `PFI_STORAGE_PROVIDER` | `filesystem` | No | Provider durable para los assets de corrida (overlays, mascaras, previews): `filesystem` (default) o `gcs`. Sin fallback silencioso: si es `gcs` y falta config, el servicio falla explicito en vez de escribir en disco local. |
+| `PFI_STORAGE_LOCAL_ROOT` | `/app/outputs/object_storage` | No | Raiz del provider `filesystem`. Por defecto `${PFI_OUTPUT_DIR}/object_storage`. |
+| `PFI_STORAGE_GCS_BUCKET` | `pfi-rm-lumbar-run-assets-2026` | Si `PFI_STORAGE_PROVIDER=gcs` | Bucket privado para los assets de corrida cuando el provider es GCS. Usa Application Default Credentials, nunca JSON de service account. |
 
 ## Notas
 

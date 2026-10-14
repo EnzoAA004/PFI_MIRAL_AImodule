@@ -1,0 +1,29 @@
+.git
+.github
+.agents
+.venv/
+venv/
+__pycache__/
+.pytest_cache/
+.coverage
+htmlcov/
+
+# Local credentials and environment files
+.env
+.env.*
+!.env.example
+
+# Patient data, local training data, and runtime outputs
+data/
+datasets/
+uploads/
+outputs/
+notebooks/
+**/*.ipynb
+**/*.dcm
+**/*.nii
+**/*.nii.gz
+**/*.mha
+**/*.mhd
+**/*.nrrd
+
