@@ -2,6 +2,9 @@ from __future__ import annotations
 
 import math
 import os
+import shutil
+import threading
+from contextlib import contextmanager
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Dict, NamedTuple
@@ -9,6 +12,11 @@ from typing import Any, Dict, NamedTuple
 import numpy as np
 import torch
 from PIL import Image
+
+try:  # Linux (el contenedor). Sin fcntl solo queda el bloqueo entre hilos del proceso.
+    import fcntl
+except ImportError:  # pragma: no cover - plataformas sin fcntl
+    fcntl = None
 
 from .agent_policy import HUMAN_REVIEW_REQUIRED, NOT_CLINICAL_DIAGNOSIS, build_agent_decision
 from .asset_registry import is_slice_asset_name, registered_assets_for_run, register_run_assets, slice_asset_name, slice_pixels_asset_name
@@ -1876,6 +1884,47 @@ def series_preview_dir(input_id: str) -> Path:
     return get_settings().output_dir / "series_preview" / input_id
 
 
+_PREVIEW_THREAD_LOCKS: Dict[str, threading.Lock] = {}
+_PREVIEW_THREAD_LOCKS_GUARD = threading.Lock()
+
+
+@contextmanager
+def _preview_render_lock(input_id: str):
+    """Un solo render a la vez por serie, entre hilos y entre procesos.
+
+    Los endpoints sincronos corren en un pool de hilos y el volumen de salidas se comparte con
+    cualquier otro proceso del servicio (mas workers, otra replica): un candado en memoria no
+    alcanza. Se combina uno por hilo (lo unico disponible sin fcntl) con `flock` sobre un archivo
+    al lado de las series, que coordina procesos. El archivo de candado es chico y se deja: borrarlo
+    mientras otro proceso espera permitiria que dos creen candados distintos.
+    """
+    base = series_preview_dir(input_id).parent
+    base.mkdir(parents=True, exist_ok=True)
+    with _PREVIEW_THREAD_LOCKS_GUARD:
+        thread_lock = _PREVIEW_THREAD_LOCKS.setdefault(input_id, threading.Lock())
+    with thread_lock:
+        handle = open(base / f".{input_id}.lock", "a+b")
+        try:
+            if fcntl is not None:
+                fcntl.flock(handle, fcntl.LOCK_EX)
+            yield
+        finally:
+            try:
+                if fcntl is not None:
+                    fcntl.flock(handle, fcntl.LOCK_UN)
+            finally:
+                handle.close()
+
+
+def _published_preview_count(output_dir: Path) -> int | None:
+    """Cantidad de cortes de una serie ya publicada, o None si todavia no esta publicada."""
+    marker = output_dir / "count"
+    try:
+        return int(marker.read_text().strip() or 0)
+    except (OSError, ValueError):
+        return None
+
+
 def render_series_previews(input_id: str, input_path: str) -> int:
     """Escribe un PNG por corte de una serie registrada y devuelve cuantos hay.
 
@@ -1887,29 +1936,55 @@ def render_series_previews(input_id: str, input_path: str) -> int:
     Se rinde una vez por serie y queda en disco. Armar el volumen desde los DICOM es lo
     caro, y hacerlo en cada pedido de corte significaria apilar la serie entera quince
     veces para recorrerla una.
+
+    Publicacion: la serie se rinde en una carpeta de preparacion propia y se publica de una vez
+    renombrandola a su lugar (rename atomico), con el contador adentro. Una serie publicada no se
+    vuelve a escribir, asi que ningun pedido puede abrir un corte mientras otro lo reescribe. Los
+    pedidos que llegan mientras se rinde esperan el candado y encuentran la serie publicada. Si el
+    render falla, la carpeta de preparacion se borra: no queda nada reutilizable a medias.
     """
     output_dir = series_preview_dir(input_id)
-    # El contador se escribe al final: si el render se corta a la mitad, el marcador no
-    # esta y el proximo pedido rehace la serie en vez de servir un tramo incompleto.
-    marker = output_dir / "count"
-    if marker.exists():
-        return int(marker.read_text().strip() or 0)
+    count = _published_preview_count(output_dir)
+    if count is not None:
+        return count
 
-    # El plano no incide: `resolve_input_path` no lo usa, y aca no hay canonicalizacion
-    # por plano porque no se va a inferir sobre esto, solo mostrarlo.
-    loaded = load_input(input_path, "sagittal")
-    array = loaded.array
-    if array.ndim == 2:
-        array = array[None]
-    if array.ndim != 3:
-        return 0
-    count = min(int(array.shape[0]), MAX_SLICE_PREVIEWS)
-    output_dir.mkdir(parents=True, exist_ok=True)
-    for index in range(count):
-        frame = robust_percentile_normalize(array[index])
-        Image.fromarray(np.clip(frame * 255.0, 0, 255).astype(np.uint8)).save(output_dir / slice_asset_name(index))
-    marker.write_text(str(count))
-    return count
+    with _preview_render_lock(input_id):
+        # Otro pedido pudo publicarla mientras este esperaba el candado.
+        count = _published_preview_count(output_dir)
+        if count is not None:
+            return count
+
+        # El plano no incide: `resolve_input_path` no lo usa, y aca no hay canonicalizacion
+        # por plano porque no se va a inferir sobre esto, solo mostrarlo.
+        loaded = load_input(input_path, "sagittal")
+        array = loaded.array
+        if array.ndim == 2:
+            array = array[None]
+        if array.ndim != 3:
+            return 0
+        count = min(int(array.shape[0]), MAX_SLICE_PREVIEWS)
+
+        base = output_dir.parent
+        # Restos de preparaciones que un proceso interrumpido no llego a limpiar: bajo el candado de
+        # esta serie nadie mas esta preparando, asi que son huerfanos.
+        for leftover in base.glob(f".{input_id}.staging-*"):
+            shutil.rmtree(leftover, ignore_errors=True)
+        staging = base / f".{input_id}.staging-{os.getpid()}-{threading.get_ident()}"
+        staging.mkdir(parents=True)
+        try:
+            for index in range(count):
+                frame = robust_percentile_normalize(array[index])
+                Image.fromarray(np.clip(frame * 255.0, 0, 255).astype(np.uint8)).save(staging / slice_asset_name(index))
+            (staging / "count").write_text(str(count))
+            # Una carpeta final sin contador es un render anterior que se corto a la mitad: no se
+            # sirve, se reemplaza.
+            if output_dir.exists():
+                shutil.rmtree(output_dir)
+            os.replace(staging, output_dir)
+        except BaseException:
+            shutil.rmtree(staging, ignore_errors=True)
+            raise
+        return count
 
 
 def class_mask_asset_name(class_name_value: str) -> str:
