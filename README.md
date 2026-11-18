@@ -146,3 +146,13 @@ Los documentos `P9_*`, `P10_*`, `*_EVIDENCE.md`, notebooks y notas de entrenamie
 - Los resultados son técnicos y requieren revisión profesional.
 - Los dos clasificadores externos indicados arriba no funcionan sin sus checkpoints autorizados.
 - No se distribuyen datasets ni datos identificables.
+
+## Versiones verificadas el 18 de noviembre de 2026
+
+| Entorno de este componente | Referencia de código | Digest observado |
+|---|---|---|
+| Código fuente de partida en GitHub, rama main | a93912660f127b31fcf6d0b9b234e82e67eb081d | Depende del build local |
+| Docker local con imagen publicada en GHCR | 90f4a8e076cc18efa9ebce10c604e1c3d1f3e35c (etiqueta OCI de revisión) | sha256:2a393485d10dcd63375555bc304bab00314a8b2d09a0c16fd903bcf61a1c253a |
+| Cloud Run E2E con tráfico en us-central1 | sha-8254f3ab5636b80673ad5371c72b007775cc432d (tag de Artifact Registry) | sha256:bf4b4ba371a0cdb5a501b2215cb92bb4a657e227fc7c18b670a0d70df4ebf664 |
+
+Para reproducir la modalidad desde fuente, clonar los tres repositorios hermanos y usar el Compose local del backend. Para reproducir un despliegue publicado, fijar el digest individual de cada servicio. La etiqueta latest puede cambiar. Volver a verificar la revisión con tráfico y su digest en cada evaluación cloud.
