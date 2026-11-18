@@ -6,7 +6,7 @@ import os
 import shutil
 import zipfile
 from dataclasses import dataclass
-from pathlib import Path
+from pathlib import Path, PureWindowsPath
 from threading import Lock
 from typing import BinaryIO, Literal
 from uuid import uuid4
@@ -430,11 +430,16 @@ def safe_extract_zip(zip_path: Path, extract_dir: Path) -> tuple[int, int]:
                 total += member.file_size
                 if total > max_bytes:
                     raise InputRegistryError("zip descomprimido excede el limite", status_code=413)
-                member_path = Path(member.filename)
-                if member_path.is_absolute() or member_path.drive:
+                member_path = PureWindowsPath(member.filename)
+                if member_path.anchor or ".." in member_path.parts:
                     raise InputRegistryError("zip con ruta invalida (path traversal)", status_code=400)
-                target = (extract_dir / member.filename).resolve()
-                if not str(target).startswith(str(resolved_extract)):
+                parts = member_path.parts
+                if os.name == "nt":
+                    # Scanner directories can include a colon. Escape percent first to
+                    # distinguish a literal "%3A" from an encoded colon.
+                    parts = tuple(part.replace("%", "%25").replace(":", "%3A") for part in parts)
+                target = extract_dir.joinpath(*parts).resolve()
+                if not target.is_relative_to(resolved_extract) or target == resolved_extract:
                     raise InputRegistryError("zip con ruta invalida (path traversal)", status_code=400)
                 target.parent.mkdir(parents=True, exist_ok=True)
                 with archive.open(member) as source, target.open("wb") as handle:
@@ -455,7 +460,7 @@ def upload_destination(input_id: str, plane: str, suffix: str) -> Path:
     destination = destination_dir / f"{input_id}{suffix}"
     resolved_root = root.resolve()
     resolved_destination = destination.resolve()
-    if not str(resolved_destination).startswith(str(resolved_root)):
+    if not resolved_destination.is_relative_to(resolved_root):
         raise InputRegistryError("ruta de upload invalida", status_code=400)
     return destination
 
