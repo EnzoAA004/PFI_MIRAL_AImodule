@@ -7,6 +7,7 @@ from fastapi.testclient import TestClient
 from pfi_ai_service.api import app
 from pfi_ai_service.input_registry import InputRegistrationRequest, register_server_side_input
 from pfi_ai_service.real_inference_runtime import clear_model_cache
+from input_test_support import register_fixture_input
 
 
 def test_pipeline_run_strict_axial_real_baseline_fixture(monkeypatch, tmp_path) -> None:
@@ -16,6 +17,7 @@ def test_pipeline_run_strict_axial_real_baseline_fixture(monkeypatch, tmp_path) 
     monkeypatch.setenv("PFI_OUTPUT_DIR", str(tmp_path / "outputs"))
     monkeypatch.setenv("PFI_INFERENCE_DEVICE", "cpu")
     clear_model_cache()
+    input_id = register_fixture_input(monkeypatch, tmp_path, "CASE-AI008-AXIAL-FIXTURE", "axial")
 
     response = TestClient(app).post(
         "/pipeline/run",
@@ -24,7 +26,7 @@ def test_pipeline_run_strict_axial_real_baseline_fixture(monkeypatch, tmp_path) 
             "caseId": "CASE-AI008-AXIAL-FIXTURE",
             "plane": "axial",
             "modelKey": "axial_t2_alkafri",
-            "inputPath": str(fixture),
+            "inputId": input_id,
             "metadata": {
                 "inferenceMode": "real_baseline",
                 "allowContractFallback": False,
@@ -83,6 +85,7 @@ def test_strict_axial_real_baseline_rejects_model_plane_mismatch(monkeypatch, tm
     monkeypatch.setenv("PFI_OUTPUT_DIR", str(tmp_path / "outputs"))
     monkeypatch.setenv("PFI_INFERENCE_DEVICE", "cpu")
     clear_model_cache()
+    input_id = register_fixture_input(monkeypatch, tmp_path, "CASE-AI008-AXIAL-MISMATCH", "sagittal")
 
     response = TestClient(app).post(
         "/pipeline/run",
@@ -91,7 +94,7 @@ def test_strict_axial_real_baseline_rejects_model_plane_mismatch(monkeypatch, tm
             "caseId": "CASE-AI008-AXIAL-MISMATCH",
             "plane": "sagittal",
             "modelKey": "axial_t2_alkafri",
-            "inputPath": str(fixture),
+            "inputId": input_id,
             "metadata": {
                 "inferenceMode": "real_baseline",
                 "allowContractFallback": False,

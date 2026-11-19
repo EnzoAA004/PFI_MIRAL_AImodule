@@ -10,7 +10,7 @@ def test_multiplanar_run_endpoint(monkeypatch, tmp_path):
     response = client.post(
         "/multiplanar/run",
         headers={"X-Trace-Id": "trace-multi-test"},
-        json={"caseId": "CASE-TEST-002", "metadata": {"inferenceMode": "contract"}},
+        json={"caseId": "CASE-TEST-002", "sagittalInputId": "inp_test_sagittal_002", "metadata": {"inferenceMode": "contract"}},
     )
     assert response.status_code == 200
     body = response.json()

@@ -22,7 +22,7 @@ from .multiplanar_v2_executor import (
 )
 from .multiplanar_v2_models import MultiplanarRunV2Request
 from .reporting import write_json
-from .security import safe_exception_type
+from .security import require_public_input_reference, safe_exception_type
 from .settings import get_settings
 
 LOGGER = logging.getLogger(__name__)
@@ -31,6 +31,9 @@ LOGGER = logging.getLogger(__name__)
 def register_multiplanar_routes(app: FastAPI) -> None:
     @app.post("/multiplanar/run")
     def multiplanar_run(request: MultiplanarRunRequest, http_request: Request):
+        require_public_input_reference(request.case_id, "sagittal", request.sagittal_input_id, request.sagittal_input_path)
+        if request.axial_input_id or request.axial_input_path:
+            require_public_input_reference(request.case_id, "axial", request.axial_input_id, request.axial_input_path)
         trace_id = request_trace_id(http_request)
         metadata = dict(request.metadata or {})
         metadata.setdefault("traceId", trace_id)

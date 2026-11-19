@@ -284,7 +284,7 @@ def test_v1_route_uses_canonical_executor_not_deprecated_pipeline(monkeypatch: p
     response = TestClient(app).post(
         "/multiplanar/run",
         headers={"X-Trace-Id": "trace-p9a-v1"},
-        json={"caseId": "CASE-P9A-V1", "metadata": {"inferenceMode": "contract"}},
+        json={"caseId": "CASE-P9A-V1", "sagittalInputId": "inp_test_sagittal_p9a", "metadata": {"inferenceMode": "contract"}},
     )
 
     assert response.status_code == 200, response.text

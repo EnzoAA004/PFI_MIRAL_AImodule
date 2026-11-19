@@ -10,6 +10,11 @@ El frontend nunca consume este servicio directamente. El backend aplica autentic
 
 La arquitectura completa está documentada en el [repositorio backend](https://github.com/EnzoAA004/PFI_MVPTest_Enzo_Backend/blob/main/docs/architecture.md).
 
+## Autores académicos
+
+- Enzo Andrea Asplanatti.
+- Francisco Ezequiel Fabrello.
+
 ## Requisitos
 
 - Python 3.12 recomendado y usado por CI/Docker (`pyproject.toml` admite Python 3.10 o superior);

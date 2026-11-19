@@ -7,6 +7,7 @@ from fastapi.testclient import TestClient
 from pfi_ai_service.api import app
 from pfi_ai_service.asset_registry import clear_asset_registry
 from pfi_ai_service.real_inference_runtime import clear_model_cache
+from input_test_support import register_fixture_input
 
 
 def test_multiplanar_run_executes_dual_plane_real_baseline_with_axial_candidate(monkeypatch, tmp_path) -> None:
@@ -18,14 +19,20 @@ def test_multiplanar_run_executes_dual_plane_real_baseline_with_axial_candidate(
     monkeypatch.setenv("PFI_OUTPUT_DIR", str(tmp_path / "outputs"))
     monkeypatch.setenv("PFI_INFERENCE_DEVICE", "cpu")
     clear_model_cache()
+    sagittal_input_id = register_fixture_input(
+        monkeypatch, tmp_path, "CASE-AI012-MULTI-FIXTURE", "sagittal"
+    )
+    axial_input_id = register_fixture_input(
+        monkeypatch, tmp_path, "CASE-AI012-MULTI-FIXTURE", "axial"
+    )
 
     response = TestClient(app).post(
         "/multiplanar/run",
         headers={"X-Trace-Id": "trace-ai012-multiplanar-fixture"},
         json={
             "caseId": "CASE-AI012-MULTI-FIXTURE",
-            "sagittalInputPath": str(sagittal_fixture),
-            "axialInputPath": str(axial_fixture),
+            "sagittalInputId": sagittal_input_id,
+            "axialInputId": axial_input_id,
             "sagittalModelKey": "sagittal_spider",
             "axialModelKey": "axial_t2_alkafri",
             "metadata": {

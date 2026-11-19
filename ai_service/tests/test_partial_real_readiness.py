@@ -6,6 +6,7 @@ from fastapi.testclient import TestClient
 
 from pfi_ai_service.api import app
 from pfi_ai_service.real_inference_runtime import clear_model_cache
+from input_test_support import register_fixture_input
 
 
 def configure_local_final_models(monkeypatch, tmp_path: Path) -> None:
@@ -70,13 +71,14 @@ def test_axial_candidate_is_qualified_for_strict_real_baseline(monkeypatch, tmp_
     assert verify_body["runtimeCandidateModels"][0]["qualityGatePassed"] is False
 
     sagittal_fixture = Path("ai_service/tests/fixtures/real_baseline/sagittal_sample_input.npy")
+    sagittal_input_id = register_fixture_input(monkeypatch, tmp_path, "CASE-PARTIAL-SAGITTAL", "sagittal")
     sagittal_response = client.post(
         "/pipeline/run",
         json={
             "caseId": "CASE-PARTIAL-SAGITTAL",
             "plane": "sagittal",
             "modelKey": "sagittal_spider",
-            "inputPath": str(sagittal_fixture),
+            "inputId": sagittal_input_id,
             "metadata": {
                 "inferenceMode": "real_baseline",
                 "allowContractFallback": False,
@@ -91,13 +93,14 @@ def test_axial_candidate_is_qualified_for_strict_real_baseline(monkeypatch, tmp_
     assert sagittal_body["modelArtifact"]["availableForRealInference"] is True
 
     axial_fixture = Path("ai_service/tests/fixtures/real_baseline/axial_sample_input.npy")
+    axial_input_id = register_fixture_input(monkeypatch, tmp_path, "CASE-PARTIAL-AXIAL", "axial")
     axial_response = client.post(
         "/pipeline/run",
         json={
             "caseId": "CASE-PARTIAL-AXIAL",
             "plane": "axial",
             "modelKey": "axial_t2_alkafri",
-            "inputPath": str(axial_fixture),
+            "inputId": axial_input_id,
             "metadata": {
                 "inferenceMode": "real_baseline",
                 "allowContractFallback": False,
@@ -122,13 +125,15 @@ def test_multiplanar_readiness_flags_allow_sagittal_only_progress(monkeypatch, t
     client = TestClient(app)
     sagittal_fixture = Path("ai_service/tests/fixtures/real_baseline/sagittal_sample_input.npy")
     axial_fixture = Path("ai_service/tests/fixtures/real_baseline/axial_sample_input.npy")
+    sagittal_input_id = register_fixture_input(monkeypatch, tmp_path, "CASE-PARTIAL-MULTI", "sagittal")
+    axial_input_id = register_fixture_input(monkeypatch, tmp_path, "CASE-PARTIAL-MULTI", "axial")
 
     response = client.post(
         "/multiplanar/run",
         json={
             "caseId": "CASE-PARTIAL-MULTI",
-            "sagittalInputPath": str(sagittal_fixture),
-            "axialInputPath": str(axial_fixture),
+            "sagittalInputId": sagittal_input_id,
+            "axialInputId": axial_input_id,
             "metadata": {
                 "inferenceMode": "real_baseline",
                 "allowContractFallback": True,

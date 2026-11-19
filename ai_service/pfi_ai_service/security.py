@@ -4,6 +4,8 @@ import re
 from pathlib import Path
 from typing import Any
 
+from fastapi import HTTPException
+
 
 SENSITIVE_KEYS = {
     "path",
@@ -34,6 +36,27 @@ PATH_LIKE = re.compile(
     re.IGNORECASE,
 )
 TOKEN_LIKE = re.compile(r"(bearer\s+[A-Za-z0-9._~+/=-]+|eyJ[A-Za-z0-9._~+/=-]+)", re.IGNORECASE)
+SAFE_CASE_ID = re.compile(r"[A-Za-z0-9][A-Za-z0-9_-]{0,127}\Z")
+
+
+def require_public_input_reference(case_id: str, plane: str, input_id: str | None, input_path: str | None) -> None:
+    """Public HTTP inference uses registered IDs; only a fixed, non-filesystem demo alias remains."""
+    normalized_id = input_id.strip() if isinstance(input_id, str) else ""
+    normalized_path = input_path.strip() if isinstance(input_path, str) else ""
+    if normalized_id:
+        if normalized_path:
+            raise HTTPException(status_code=400, detail="Enviar solamente inputId, no inputPath.")
+        return
+    safe_case = isinstance(case_id, str) and SAFE_CASE_ID.fullmatch(case_id.strip()) is not None
+    aliases = {f"demo/{case_id}"}
+    if plane in {"sagittal", "axial"}:
+        aliases.add(f"demo/{case_id}/{plane}")
+    if safe_case and normalized_path in aliases:
+        return
+    raise HTTPException(
+        status_code=400,
+        detail="inputId es obligatorio; las rutas del filesystem solo se admiten dentro del flujo interno.",
+    )
 
 
 def sanitize_public_payload(value: Any, *, keep_error_path: bool = False) -> Any:

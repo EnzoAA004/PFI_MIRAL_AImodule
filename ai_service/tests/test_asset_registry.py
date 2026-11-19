@@ -19,6 +19,7 @@ from pfi_ai_service.asset_registry import (
 )
 from pfi_ai_service.object_storage import GoogleCloudStorageObjectStorage
 from pfi_ai_service.real_inference_runtime import clear_model_cache
+from input_test_support import register_fixture_input
 
 
 class _FakeGcsBlob:
@@ -123,13 +124,14 @@ def run_sagittal_fixture(monkeypatch, tmp_path) -> dict:
     monkeypatch.setenv("PFI_INFERENCE_DEVICE", "cpu")
     clear_asset_registry()
     clear_model_cache()
+    input_id = register_fixture_input(monkeypatch, tmp_path, "CASE-AI015-ASSET", "sagittal")
     response = TestClient(app).post(
         "/pipeline/run",
         json={
             "caseId": "CASE-AI015-ASSET",
             "plane": "sagittal",
             "modelKey": "sagittal_spider",
-            "inputPath": str(fixture),
+            "inputId": input_id,
             "metadata": {
                 "inferenceMode": "real_baseline",
                 "allowContractFallback": False,
@@ -312,6 +314,7 @@ def test_asset_registry_rejects_misconfigured_gcs_provider_on_persist(monkeypatc
 
     fixture = Path("ai_service/tests/fixtures/real_baseline/sagittal_sample_input.npy")
     assert fixture.exists()
+    input_id = register_fixture_input(monkeypatch, tmp_path, "CASE-AI015-ASSET-GCS-MISCONFIG", "sagittal")
     with pytest.raises(AssetRegistryError) as exc_info:
         TestClient(app, raise_server_exceptions=True).post(
             "/pipeline/run",
@@ -319,7 +322,7 @@ def test_asset_registry_rejects_misconfigured_gcs_provider_on_persist(monkeypatc
                 "caseId": "CASE-AI015-ASSET-GCS-MISCONFIG",
                 "plane": "sagittal",
                 "modelKey": "sagittal_spider",
-                "inputPath": str(fixture),
+                "inputId": input_id,
                 "metadata": {
                     "inferenceMode": "real_baseline",
                     "allowContractFallback": False,

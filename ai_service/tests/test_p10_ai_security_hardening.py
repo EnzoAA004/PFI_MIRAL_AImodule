@@ -58,7 +58,7 @@ def real_payload(*, allow_fallback: bool, trace_id: str) -> dict[str, Any]:
         "caseId": "CASE-P10-AI-SEC",
         "plane": "sagittal",
         "modelKey": "sagittal_spider",
-        "inputPath": "fixture-or-internal-path-not-public.npy",
+        "inputPath": "demo/CASE-P10-AI-SEC",
         "metadata": {
             "inferenceMode": "real_baseline",
             "allowContractFallback": allow_fallback,
@@ -93,6 +93,23 @@ def test_http_errors_are_sanitized_and_preserve_trace_id(monkeypatch, tmp_path: 
     assert body["humanReviewRequired"] is True
     assert body["notClinicalDiagnosis"] is True
     assert_no_internal_detail(body)
+
+
+def test_public_inference_routes_reject_container_paths(monkeypatch, tmp_path: Path) -> None:
+    monkeypatch.setenv("PFI_OUTPUT_DIR", str(tmp_path / "outputs"))
+    client = TestClient(app, raise_server_exceptions=False)
+    pipeline_response = client.post(
+        "/pipeline/run",
+        json={"caseId": "CASE-PATH-1", "plane": "sagittal", "inputPath": "/etc/passwd"},
+    )
+    multiplanar_response = client.post(
+        "/multiplanar/run",
+        json={"caseId": "CASE-PATH-1", "sagittalInputPath": "/etc/passwd"},
+    )
+    assert pipeline_response.status_code in {400, 422}
+    assert multiplanar_response.status_code in {400, 422}
+    assert "inputPath" not in pipeline_response.text or "inputId" in pipeline_response.text
+    assert "sagittalInputPath" not in multiplanar_response.text or "inputId" in multiplanar_response.text
 
 
 def test_real_inference_failure_with_fallback_is_explicit_contract_and_sanitized(

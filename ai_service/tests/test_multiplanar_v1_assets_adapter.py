@@ -236,7 +236,7 @@ def test_multiplanar_run_endpoint_assets_serialize_as_object(monkeypatch: pytest
     response = client.post(
         "/multiplanar/run",
         headers={"X-Trace-Id": "trace-p9a2-endpoint"},
-        json={"caseId": "CASE-P9A2-ENDPOINT", "metadata": {"inferenceMode": "real_baseline"}},
+        json={"caseId": "CASE-P9A2-ENDPOINT", "sagittalInputId": "inp_test_sagittal_p9a2", "metadata": {"inferenceMode": "real_baseline"}},
     )
 
     assert response.status_code == 200, response.text

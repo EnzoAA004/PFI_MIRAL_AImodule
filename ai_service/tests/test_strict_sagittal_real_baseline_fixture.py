@@ -6,6 +6,7 @@ from fastapi.testclient import TestClient
 
 from pfi_ai_service.api import app
 from pfi_ai_service.real_inference_runtime import clear_model_cache
+from input_test_support import register_fixture_input
 
 
 def test_pipeline_run_strict_sagittal_real_baseline_fixture(monkeypatch, tmp_path) -> None:
@@ -15,6 +16,7 @@ def test_pipeline_run_strict_sagittal_real_baseline_fixture(monkeypatch, tmp_pat
     monkeypatch.setenv("PFI_OUTPUT_DIR", str(tmp_path / "outputs"))
     monkeypatch.setenv("PFI_INFERENCE_DEVICE", "cpu")
     clear_model_cache()
+    input_id = register_fixture_input(monkeypatch, tmp_path, "CASE-AI007-SAGITTAL-FIXTURE", "sagittal")
 
     response = TestClient(app).post(
         "/pipeline/run",
@@ -22,7 +24,7 @@ def test_pipeline_run_strict_sagittal_real_baseline_fixture(monkeypatch, tmp_pat
             "caseId": "CASE-AI007-SAGITTAL-FIXTURE",
             "plane": "sagittal",
             "modelKey": "sagittal_spider",
-            "inputPath": str(fixture),
+            "inputId": input_id,
             "metadata": {
                 "inferenceMode": "real_baseline",
                 "allowContractFallback": False,

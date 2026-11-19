@@ -85,6 +85,7 @@ def test_timeout_argument_invalid_exits_two(tmp_path: Path) -> None:
         [sys.executable, "-m", "pfi_ai_service.training.notebook_executor", "--timeout", "-1"],
         text=True,
         capture_output=True,
+        cwd=Path(__file__).resolve().parents[1],
     )
     assert proc.returncode == 2
 

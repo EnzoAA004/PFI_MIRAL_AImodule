@@ -7,6 +7,7 @@ from fastapi.testclient import TestClient
 from pfi_ai_service.api import app
 from pfi_ai_service.asset_registry import clear_asset_registry
 from pfi_ai_service.real_inference_runtime import clear_model_cache
+from input_test_support import register_fixture_input
 
 
 client = TestClient(app)
@@ -19,13 +20,14 @@ def run_sagittal_fixture(monkeypatch, tmp_path) -> dict:
     monkeypatch.setenv("PFI_INFERENCE_DEVICE", "cpu")
     clear_asset_registry()
     clear_model_cache()
+    input_id = register_fixture_input(monkeypatch, tmp_path, "CASE-AI016-ASSET-SERVE", "sagittal")
     response = client.post(
         "/pipeline/run",
         json={
             "caseId": "CASE-AI016-ASSET-SERVE",
             "plane": "sagittal",
             "modelKey": "sagittal_spider",
-            "inputPath": str(fixture),
+            "inputId": input_id,
             "metadata": {
                 "inferenceMode": "real_baseline",
                 "allowContractFallback": False,

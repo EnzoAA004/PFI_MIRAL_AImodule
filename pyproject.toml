@@ -9,7 +9,8 @@ description = "MVP académico para análisis asistido de RM lumbar sagital."
 readme = "README.md"
 requires-python = ">=3.10"
 authors = [
-  { name = "Enzo Asplanatti" }
+  { name = "Enzo Andrea Asplanatti" },
+  { name = "Francisco Ezequiel Fabrello" }
 ]
 dependencies = [
   "numpy>=1.24",

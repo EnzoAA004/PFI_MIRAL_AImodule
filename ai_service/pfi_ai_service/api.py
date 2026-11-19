@@ -39,7 +39,7 @@ from .product_orchestration import ProductAnalyzeRequest, run_product_analysis
 from .readiness import build_readiness
 from .report_summary import recent_agent_report_summaries, summarize_agent_report
 from .reporting import build_markdown_summary
-from .security import sanitize_public_payload
+from .security import require_public_input_reference, sanitize_public_payload
 from .study_contract import demo_study_review_contract
 from .disc_degenerative_runtime import (
     DiscDegenerativeRuntimeError,
@@ -461,6 +461,7 @@ def pipeline_schema_verify():
 
 @app.post("/inference/sagittal")
 def inference_sagittal(request: PipelineRunRequest):
+    require_public_input_reference(request.case_id, "sagittal", request.input_id, request.input_path)
     if request.plane != "sagittal":
         request = request.model_copy(update={"plane": "sagittal"})
     return clean_for_json(run_sagittal_inference(request))
@@ -468,6 +469,7 @@ def inference_sagittal(request: PipelineRunRequest):
 
 @app.post("/inference/axial")
 def inference_axial(request: PipelineRunRequest):
+    require_public_input_reference(request.case_id, "axial", request.input_id, request.input_path)
     if request.plane != "axial":
         request = request.model_copy(update={"plane": "axial"})
     return clean_for_json(run_axial_inference(request))
@@ -475,6 +477,7 @@ def inference_axial(request: PipelineRunRequest):
 
 @app.post("/pipeline/run")
 def pipeline_run(request: PipelineRunRequest, http_request: Request):
+    require_public_input_reference(request.case_id, request.plane, request.input_id, request.input_path)
     traced_request = with_trace_metadata(request, request_trace_id(http_request))
     return clean_for_json(run_pipeline(traced_request))
 
