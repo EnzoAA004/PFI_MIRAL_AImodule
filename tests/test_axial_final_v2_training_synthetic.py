@@ -24,7 +24,9 @@ NOTEBOOK_50 = ROOT / "notebooks" / "50_axial_final_v2_test_once.ipynb"
 
 def _write_case(root: Path, name: str, split: str, patient: str, labels: list[int], relative: bool) -> dict[str, str]:
     image = (np.arange(16 * 16, dtype=np.float32).reshape(16, 16) + sum(ord(ch) for ch in name)) / 255.0
-    mask = np.full((16, 16), 250, dtype=np.int16)
+    # Label IDs and the synthetic background sentinel fit losslessly in uint8;
+    # Pillow 13 no longer writes mode-I/int16 arrays as PNG.
+    mask = np.full((16, 16), 250, dtype=np.uint8)
     for index, label in enumerate(labels):
         row = (index * 3) % 14
         col = (index * 2) % 14
@@ -36,7 +38,7 @@ def _write_case(root: Path, name: str, split: str, patient: str, labels: list[in
     np.save(image_path, image)
     from PIL import Image
 
-    Image.fromarray(mask.astype(np.int16)).save(mask_path)
+    Image.fromarray(mask).save(mask_path)
     image_value = str(image_path.relative_to(root)) if relative else str(image_path)
     mask_value = str(mask_path.relative_to(root)) if relative else str(mask_path)
     return {
@@ -64,6 +66,7 @@ def _synthetic_manifest(tmp_path: Path) -> Path:
 
 
 def _prepare_env(monkeypatch: pytest.MonkeyPatch, tmp_path: Path, *, notebook: str = "49") -> Path:
+    monkeypatch.delenv("AXIAL_FINAL_TEST_CONFIRMATION", raising=False)
     manifest = _synthetic_manifest(tmp_path)
     monkeypatch.setenv("PFI_INSTALL_NOTEBOOK_DEPS", "0")
     monkeypatch.setenv("PFI_USE_GOOGLE_DRIVE", "0")
@@ -87,7 +90,12 @@ def _prepare_env(monkeypatch: pytest.MonkeyPatch, tmp_path: Path, *, notebook: s
     return manifest
 
 
-def _exec_notebook(path: Path, *, skip_run: bool = True) -> dict[str, object]:
+def _exec_notebook(
+    path: Path,
+    *,
+    monkeypatch: pytest.MonkeyPatch,
+    skip_run: bool = True,
+) -> dict[str, object]:
     if "matplotlib" not in sys.modules:
         matplotlib = types.ModuleType("matplotlib")
         pyplot = types.ModuleType("matplotlib.pyplot")
@@ -129,19 +137,23 @@ def _exec_notebook(path: Path, *, skip_run: bool = True) -> dict[str, object]:
         pyplot.subplots = subplots
         pyplot.close = lambda *args, **kwargs: None
         matplotlib.pyplot = pyplot
-        sys.modules["matplotlib"] = matplotlib
-        sys.modules["matplotlib.pyplot"] = pyplot
+        monkeypatch.setitem(sys.modules, "matplotlib", matplotlib)
+        monkeypatch.setitem(sys.modules, "matplotlib.pyplot", pyplot)
     notebook = nbformat.read(path, as_version=4)
     module_name = f"_notebook_{path.stem}_{os.urandom(4).hex()}"
     module = types.ModuleType(module_name)
-    sys.modules[module_name] = module
+    monkeypatch.setitem(sys.modules, module_name, module)
     ns = module.__dict__
     ns["__name__"] = module_name
     ns["AI_SERVICE_COMMIT_SHA"] = "285159982832abb604a176b4302ac83a837ff1c9"
     for cell in notebook.cells:
         if cell.cell_type != "code":
             continue
-        if cell.get("id") in {"deps", "drive-mount", "repo-prep"}:
+        if cell.get("id") in {"deps", "drive-mount", "repo-prep"} or 'os.environ["RUN_MODE"] = "train"' in cell.source:
+            continue
+        if path == NOTEBOOK_50 and "TEST_ONCE_RESULT = test_once_pipeline()" in cell.source:
+            continue
+        if path == NOTEBOOK_50 and cell.get("id") == "WCFr-Jbz2GJa":
             continue
         if cell.get("id") == "run-block":
             if path == NOTEBOOK_50:
@@ -154,7 +166,7 @@ def _exec_notebook(path: Path, *, skip_run: bool = True) -> dict[str, object]:
 
 def test_notebook_49_real_train_validation_smoke(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
     _prepare_env(monkeypatch, tmp_path, notebook="49")
-    ns = _exec_notebook(NOTEBOOK_49)
+    ns = _exec_notebook(NOTEBOOK_49, monkeypatch=monkeypatch)
 
     records = ns["build_records_from_split_manifest"]()
     assert len(records) == 7
@@ -182,7 +194,7 @@ def test_notebook_49_real_train_validation_smoke(monkeypatch: pytest.MonkeyPatch
     assert class_report["trainSamplesUsed"] >= 1
     weights_boost_1 = np.array(list(class_report["finalWeights"].values()))
     monkeypatch.setenv("AXIAL_RAW0_WEIGHT_BOOST", "3.0")
-    ns_boost_3 = _exec_notebook(NOTEBOOK_49)
+    ns_boost_3 = _exec_notebook(NOTEBOOK_49, monkeypatch=monkeypatch)
     weights_boost_3 = np.array(list(ns_boost_3["class_weight_report"](records)["finalWeights"].values()))
     assert weights_boost_1[1] < weights_boost_3[1]
 
@@ -218,7 +230,7 @@ def test_notebook_49_real_train_validation_smoke(monkeypatch: pytest.MonkeyPatch
 
 def test_raw0_slice_presence_and_precision_recall(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
     _prepare_env(monkeypatch, tmp_path, notebook="49")
-    ns = _exec_notebook(NOTEBOOK_49)
+    ns = _exec_notebook(NOTEBOOK_49, monkeypatch=monkeypatch)
     truth = np.zeros((3, 4, 4), dtype=np.int64)
     pred = np.zeros((3, 4, 4), dtype=np.int64)
     truth[0, 0, 0] = 1
@@ -240,7 +252,7 @@ def test_raw0_slice_presence_and_precision_recall(monkeypatch: pytest.MonkeyPatc
 def test_notebook_49_resume_incompatibilities(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
     _prepare_env(monkeypatch, tmp_path, notebook="49")
     monkeypatch.setenv("RESUME_MODE", "required")
-    ns = _exec_notebook(NOTEBOOK_49)
+    ns = _exec_notebook(NOTEBOOK_49, monkeypatch=monkeypatch)
     records = ns["build_records_from_split_manifest"]()
     ns["mkdirs_for_run"]()
     model = ns["build_model"]()
@@ -281,7 +293,7 @@ def test_notebook_49_resume_incompatibilities(monkeypatch: pytest.MonkeyPatch, t
 
 def test_notebook_50_test_once_and_artifact(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
     _prepare_env(monkeypatch, tmp_path, notebook="49")
-    ns49 = _exec_notebook(NOTEBOOK_49)
+    ns49 = _exec_notebook(NOTEBOOK_49, monkeypatch=monkeypatch)
     records = ns49["build_records_from_split_manifest"]()
     ns49["train_model"](records, smoke_only=True)
     best_path = ns49["RESUME_DIR"] / "axial_t2_alkafri_v2.best_checkpoint.pt"
@@ -291,7 +303,7 @@ def test_notebook_50_test_once_and_artifact(monkeypatch: pytest.MonkeyPatch, tmp
     torch.save(checkpoint, best_path)
 
     monkeypatch.setenv("RUN_MODE", "evaluate")
-    ns50 = _exec_notebook(NOTEBOOK_50)
+    ns50 = _exec_notebook(NOTEBOOK_50, monkeypatch=monkeypatch)
     called_records = {"value": False}
     original_build_records = ns50["build_records_from_split_manifest"]
 
@@ -336,7 +348,7 @@ def test_notebook_50_test_once_and_artifact(monkeypatch: pytest.MonkeyPatch, tmp
     checkpoint_smoke["splitSha256"] = ns50["split_sha256"]()
     torch.save(checkpoint_smoke, best_path)
 
-    ns50_fail = _exec_notebook(NOTEBOOK_50)
+    ns50_fail = _exec_notebook(NOTEBOOK_50, monkeypatch=monkeypatch)
     monkeypatch.setenv("AXIAL_FINAL_TEST_CONFIRMATION", "axial-final-v2")
     ns50_fail["round_trip_model_from_manifest"] = lambda *args, **kwargs: (_ for _ in ()).throw(RuntimeError("roundtrip boom"))
     with pytest.raises(RuntimeError, match="roundtrip boom"):
@@ -347,7 +359,7 @@ def test_notebook_50_test_once_and_artifact(monkeypatch: pytest.MonkeyPatch, tmp
     for tmp_artifact in ns50_fail["OUTPUT_DIRS"]["models"].glob("axial_t2_alkafri_final_v2.*.tmp.pt"):
         tmp_artifact.unlink()
 
-    ns50 = _exec_notebook(NOTEBOOK_50)
+    ns50 = _exec_notebook(NOTEBOOK_50, monkeypatch=monkeypatch)
     result = ns50["test_once_pipeline"]()
     assert result["testMetrics"]["dice_macro_foreground"] is not None
     assert "raw0Precision" in result["testMetrics"]

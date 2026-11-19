@@ -10,12 +10,15 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
 WORKDIR /app
 
 RUN apt-get update \
+    && apt-get upgrade -y \
     && apt-get install -y --no-install-recommends curl \
     && rm -rf /var/lib/apt/lists/*
 
-COPY ai_service/requirements-ai-service.txt /tmp/requirements-ai-service.txt
-RUN python -m pip install --no-cache-dir --upgrade pip \
-    && python -m pip install --no-cache-dir -r /tmp/requirements-ai-service.txt
+COPY ai_service/requirements-ai-service.lock.txt /tmp/requirements-ai-service.lock.txt
+RUN python -m pip install --no-cache-dir 'pip==26.3' \
+    && python -m pip install --no-cache-dir \
+        --extra-index-url https://download.pytorch.org/whl/cpu \
+        -r /tmp/requirements-ai-service.lock.txt
 
 COPY ai_service /app/ai_service
 COPY config /app/config
@@ -35,10 +38,15 @@ COPY infra /app/infra
 COPY docs /app/docs
 
 RUN mkdir -p /app/models/final /app/outputs
+RUN addgroup --system --gid 10001 pfi \
+    && adduser --system --uid 10001 --ingroup pfi pfi \
+    && mkdir -p /app/uploads/inputs \
+    && chown -R 10001:10001 /app/outputs /app/uploads
 
 EXPOSE 8000
 
 HEALTHCHECK --interval=30s --timeout=5s --start-period=20s --retries=3 \
     CMD curl -fsS http://127.0.0.1:${PORT}/health >/dev/null || exit 1
 
+USER 10001:10001
 CMD ["sh", "-c", "uvicorn pfi_ai_service.api:app --host 0.0.0.0 --port ${PORT:-8000}"]

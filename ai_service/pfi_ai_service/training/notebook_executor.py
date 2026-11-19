@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import argparse
+import json
 import os
 import re
 import shutil
@@ -77,18 +78,23 @@ def _check_kernel_python(kernel_python: Path) -> None:
 
 
 def _make_kernel_dir(kernel_python: Path) -> Path:
-    kernel_dir = Path(tempfile.mkdtemp(prefix="pfi-nb-kernel-"))
+    kernel_root = Path(tempfile.mkdtemp(prefix="pfi-nb-kernels-"))
+    kernel_dir = kernel_root / "kernels" / "pfi-training"
+    kernel_dir.mkdir(parents=True)
     kernel_json = kernel_dir / "kernel.json"
     kernel_json.write_text(
-        "{\n"
-        '  "argv": ['
-        f'"{str(kernel_python)}", "-m", "ipykernel_launcher", "-f", "{{connection_file}}"],\n'
-        '  "display_name": "PFI temporary training kernel",\n'
-        '  "language": "python"\n'
-        "}\n",
+        json.dumps(
+            {
+                "argv": [str(kernel_python), "-m", "ipykernel_launcher", "-f", "{connection_file}"],
+                "display_name": "PFI temporary training kernel",
+                "language": "python",
+            },
+            indent=2,
+        )
+        + "\n",
         encoding="utf-8",
     )
-    return kernel_dir
+    return kernel_root
 
 
 def _validate_timeout(value: str) -> int:
@@ -143,8 +149,8 @@ def execute_notebook(input_path: Path, output_path: Path, log_path: Path, kernel
     notebook = nbformat.read(str(input_path), as_version=4)
     nbformat.validate(notebook)
     kernel_dir = _make_kernel_dir(kernel_python)
-    kernel_name = kernel_dir.name
-    kernel_path_parent = str(kernel_dir.parent)
+    kernel_name = "pfi-training"
+    kernel_path_parent = str(kernel_dir)
     log_path.parent.mkdir(parents=True, exist_ok=True)
 
     class StreamingNotebookClient(NotebookClient):  # type: ignore[misc, valid-type]
